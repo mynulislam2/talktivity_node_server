@@ -33,7 +33,7 @@ app.use(express.json({ limit: '10mb' })); // Limit payload size
   
 // }));
 app.use(cors({
-  origin: 'https://talktivity.app',
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true // ✅ Only if you use cookies or auth headers
@@ -55,7 +55,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// Mount route modules
+
 app.use('/api/auth', googleRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api', transcriptRoutes);
@@ -94,7 +94,7 @@ const server = http.createServer(app);
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: 'https://talktivity.app',
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
   }
