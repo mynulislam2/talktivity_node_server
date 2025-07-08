@@ -49,18 +49,26 @@ router.post('/google', async (req, res) => {
     dbClient = await pool.connect();
 
     // Check if user exists in database
+    console.log('🔍 Checking for existing user with email:', email);
     let userQuery = await dbClient.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
     );
+
+    console.log('📊 Database query result:', {
+      rowCount: userQuery.rowCount,
+      rows: userQuery.rows.map(u => ({ id: u.id, email: u.email, google_id: u.google_id }))
+    });
 
     let user;
 
     if (userQuery.rows.length > 0) {
       // User exists, update Google ID if not set
       user = userQuery.rows[0];
+      console.log('✅ Found existing user:', { id: user.id, email: user.email, google_id: user.google_id });
       
       if (!user.google_id) {
+        console.log('🔄 Updating Google ID for existing user');
         await dbClient.query(
           'UPDATE users SET google_id = $1, profile_picture = $2, updated_at = NOW() WHERE id = $3',
           [googleId, picture, user.id]
@@ -69,9 +77,10 @@ router.post('/google', async (req, res) => {
         user.profile_picture = picture;
       }
       
-      console.log('Existing user logged in:', user.id);
+      console.log('✅ Existing user logged in:', user.id);
     } else {
       // User doesn't exist, create new user
+      console.log('🆕 Creating new user with email:', email);
       const insertResult = await dbClient.query(
         `INSERT INTO users (email, full_name, google_id, profile_picture, password) 
          VALUES ($1, $2, $3, $4, $5) 
@@ -80,7 +89,7 @@ router.post('/google', async (req, res) => {
       );
       
       user = insertResult.rows[0];
-      console.log('New user created:', user.id);
+      console.log('🆕 New user created:', user.id);
     }
 
     // Generate JWT token

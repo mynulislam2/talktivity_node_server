@@ -64,18 +64,14 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
   let client;
   try {
     const { email, password, full_name } = req.body;
-    console.log('Registration attempt for:', { email, full_name });
     
     // Get a client from the pool
     client = await pool.connect();
     
     // Check if user already exists
-    console.log('Checking if user exists...');
     const userCheck = await client.query('SELECT * FROM users WHERE email = $1', [email]);
-    console.log('User check result:', { exists: userCheck?.rows?.length > 0 });
     
     if (userCheck?.rows?.length > 0) {
-      console.log('Registration failed: Email already exists');
       return res.status(409).json({
         success: false,
         error: 'Email already registered'
@@ -83,32 +79,35 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
     }
     
     // Hash the password
-    console.log('Hashing password...');
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
-    console.log('Password hashed successfully');
     
-    // Insert new user with detailed logging
-    console.log('Inserting new user into database...');
-    console.log('Insert parameters:', { email, full_name }); // Don't log hashedPassword
-    
+    // Insert new user
     const result = await client.query(
       'INSERT INTO users (email, password, full_name) VALUES ($1, $2, $3) RETURNING id, email, full_name, created_at',
       [email, hashedPassword, full_name]
     );
     
-    // Log the complete result for debugging
-    console.log('Database insert result:', {
-      rowCount: result?.rowCount,
-      rows: result?.rows,
-      command: result?.command
-    });
-    
     if (!result?.rows?.[0]) {
       throw new Error('User insertion did not return expected data');
     }
-    
-    console.log('User inserted successfully:', { userId: result.rows[0].id });
+
+    // Auto-add user to the common group
+    try {
+      // Find the common group
+      const groupRes = await client.query('SELECT id FROM groups WHERE is_common = TRUE LIMIT 1');
+      if (groupRes.rows.length > 0) {
+        const commonGroupId = groupRes.rows[0].id;
+        await client.query(
+          'INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [commonGroupId, result.rows[0].id]
+        );
+      } else {
+        console.error('No common group found to auto-add user');
+      }
+    } catch (err) {
+      console.error('Error auto-adding user to common group:', err.message);
+    }
     
     res.status(201).json({
       success: true,
@@ -119,8 +118,6 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Registration error:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       error: `Registration failed: ${error.message}`
@@ -135,7 +132,6 @@ router.post('/login', validateEmail, async (req, res) => {
   let client;
   try {
     const { email, password } = req.body;
-    console.log('Login attempt for:', email);
 
     // Get a client from the pool
     client = await pool.connect();
@@ -161,7 +157,6 @@ router.post('/login', validateEmail, async (req, res) => {
     }
 
     // Debug: Log the password comparison
-    console.log('Comparing passwords');
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
@@ -192,7 +187,6 @@ router.post('/login', validateEmail, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Login error:', error);
     res.status(500).json({
       success: false,
       error: 'Login failed'
@@ -226,7 +220,6 @@ router.get('/profile', authenticateToken, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error fetching user profile:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch user profile'
@@ -270,7 +263,6 @@ router.put('/profile', authenticateToken, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error updating user profile:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to update profile'
@@ -337,7 +329,6 @@ router.put('/change-password', authenticateToken, validatePassword, async (req, 
     });
     
   } catch (error) {
-    console.error('Error changing password:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to change password'

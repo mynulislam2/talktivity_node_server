@@ -6,22 +6,18 @@ const { authenticateToken } = require('./auth-routes');
 
 
 router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
-  console.log('Fetching device conversations...');
   try {
     const { deviceId } = req.params;
     const { limit = 10, offset = 0 } = req.query;
-    console.log('Fetching conversations for:', { deviceId, limit, offset });
 
     // Validate deviceId (should be a string, not requiring numeric validation)
     if (!deviceId || deviceId.trim() === '') {
-      console.log('Invalid deviceId:', deviceId);
       return res.status(400).json({
         success: false,
         error: 'Device ID is required and cannot be empty'
       });
     }
 
-    console.log('Executing device conversations query...');
     // Get all conversations for the device
     const conversationsResult = await pool.query(`
       SELECT id, room_name, device_id, timestamp, transcript 
@@ -31,12 +27,6 @@ router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
       LIMIT $2 OFFSET $3
     `, [deviceId, limit, offset]);
         
-    console.log('Device conversations query result:', {
-      rowCount: conversationsResult.rowCount,
-      firstRow: conversationsResult.rows[0] ? 'exists' : 'null'
-    });
-
-    console.log('Executing device count query...');
     // Count total conversations for this device
     const countResult = await pool.query(`
       SELECT COUNT(*) as total
@@ -45,7 +35,6 @@ router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
     `, [deviceId]);
         
     const total = parseInt(countResult.rows[0].total);
-    console.log('Total device conversations found:', total);
 
     // Calculate pagination info
     const paginationInfo = {
@@ -54,7 +43,6 @@ router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
       offset: parseInt(offset),
       hasMore: total > (parseInt(offset) + parseInt(limit))
     };
-    console.log('Pagination info:', paginationInfo);
 
     res.json({
       success: true,
@@ -63,29 +51,7 @@ router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
         pagination: paginationInfo
       }
     });
-    console.log('Device conversations response sent successfully');
-   
   } catch (error) {
-    console.error('Error fetching device conversations:', {
-      message: error.message,
-      stack: error.stack,
-      code: error.code,
-      deviceId: req.params.deviceId
-    });
-        
-    // Log database connection status
-    try {
-      const connectionTest = await pool.query('SELECT 1');
-      console.log('Database connection status:', {
-        connected: connectionTest.rows.length > 0,
-        poolTotal: pool.totalCount,
-        poolIdle: pool.idleCount,
-        poolWaiting: pool.waitingCount
-      });
-    } catch (dbError) {
-      console.error('Database connection test failed:', dbError.message);
-    }
-
     res.status(500).json({
       success: false,
       error: error.message
@@ -96,22 +62,18 @@ router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
 // GET transcript by ID with all latest conversations (no limit)
 // Get latest conversations for a specific user
 router.get('/users/:userId/latest-conversations', async (req, res) => {
-  console.log('yes')
   try {
     const { userId } = req.params;
     const { limit = 10, offset = 0 } = req.query;
-    console.log('Fetching conversations for:', { userId, limit, offset });
 
     // Validate userId
     if (isNaN(parseInt(userId))) {
-      console.log('Invalid userId format:', userId);
       return res.status(400).json({
         success: false,
         error: 'User ID must be a number'
       });
     }
 
-    console.log('Executing conversations query...');
     // Get all conversations for the user
     const conversationsResult = await pool.query(`
       SELECT id, room_name, user_id, timestamp, transcript 
@@ -121,12 +83,6 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
       LIMIT $2 OFFSET $3
     `, [userId, limit, offset]);
     
-    console.log('Conversations query result:', {
-      rowCount: conversationsResult.rowCount,
-      firstRow: conversationsResult.rows[0] ? 'exists' : 'null'
-    });
-
-    console.log('Executing count query...');
     // Count total conversations
     const countResult = await pool.query(`
       SELECT COUNT(*) as total
@@ -135,7 +91,6 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
     `, [userId]);
     
     const total = parseInt(countResult.rows[0].total);
-    console.log('Total conversations found:', total);
 
     // Calculate pagination info
     const paginationInfo = {
@@ -144,7 +99,6 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
       offset: parseInt(offset),
       hasMore: total > (parseInt(offset) + parseInt(limit))
     };
-    console.log('Pagination info:', paginationInfo);
 
     res.json({
       success: true,
@@ -153,29 +107,60 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
         pagination: paginationInfo
       }
     });
-    console.log('Response sent successfully');
-
   } catch (error) {
-    console.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
-      code: error.code, // PostgreSQL error code if applicable
-      userId: req.params.userId
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
-    
-    // Log database connection status
-    try {
-      const connectionTest = await pool.query('SELECT 1');
-      console.log('Database connection status:', {
-        connected: connectionTest.rows.length > 0,
-        poolTotal: pool.totalCount,
-        poolIdle: pool.idleCount,
-        poolWaiting: pool.waitingCount
+  }
+});
+
+// GET all conversations for a user in a specific month and year
+router.get('/users/:userId/conversations-by-month', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { month, year } = req.query;
+
+    if (isNaN(parseInt(userId))) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID must be a number'
       });
-    } catch (dbError) {
-      console.error('Database connection test failed:', dbError.message);
+    }
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        error: 'Month and year are required as query parameters'
+      });
+    }
+    const monthInt = parseInt(month);
+    const yearInt = parseInt(year);
+    if (isNaN(monthInt) || isNaN(yearInt) || monthInt < 1 || monthInt > 12) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid month or year'
+      });
     }
 
+    // Query for conversations in the given month and year
+    const conversationsResult = await pool.query(`
+      SELECT id, room_name, user_id, timestamp, transcript
+      FROM conversations
+      WHERE user_id = $1
+        AND EXTRACT(MONTH FROM timestamp) = $2
+        AND EXTRACT(YEAR FROM timestamp) = $3
+      ORDER BY timestamp DESC
+    `, [userId, monthInt, yearInt]);
+
+    res.json({
+      success: true,
+      data: {
+        conversations: conversationsResult.rows,
+        month: monthInt,
+        year: yearInt
+      }
+    });
+  } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message
@@ -185,18 +170,6 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
 
 // Add debugging middleware for all routes
 router.use((req, res, next) => {
-  console.log('------------------');
-  console.log('New Request:', {
-    timestamp: new Date().toISOString(),
-    method: req.method,
-    path: req.path,
-    params: req.params,
-    query: req.query,
-    headers: {
-      'content-type': req.headers['content-type'],
-      authorization: req.headers.authorization ? 'present' : 'absent'
-    }
-  });
   next();
 });
 // GET latest transcript session
@@ -221,7 +194,6 @@ router.get('/latest-transcript', async (req, res) => {
       data: result.rows[0]
     });
   } catch (error) {
-    console.error('Error fetching latest transcript:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -254,7 +226,6 @@ router.get('/latest-transcript/:room_name', async (req, res) => {
       data: result.rows[0]
     });
   } catch (error) {
-    console.error(`Error fetching latest transcript for room ${req.params.room_name}:`, error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -276,7 +247,6 @@ router.get('/transcripts', async (req, res) => {
       data: result.rows
     });
   } catch (error) {
-    console.error('Error fetching all transcripts:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -307,7 +277,6 @@ router.get('/transcripts/:id', async (req, res) => {
       data: result.rows[0]
     });
   } catch (error) {
-    console.error(`Error fetching transcript with ID ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -332,7 +301,6 @@ router.get('/transcripts/room/:room_name', async (req, res) => {
       data: result.rows
     });
   } catch (error) {
-    console.error(`Error fetching transcripts for room ${req.params.room_name}:`, error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -365,7 +333,6 @@ router.post('/transcripts', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error saving transcript:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -400,7 +367,6 @@ router.delete('/transcripts/:id', async (req, res) => {
       message: 'Transcript deleted successfully'
     });
   } catch (error) {
-    console.error(`Error deleting transcript with ID ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -432,7 +398,6 @@ router.delete('/transcripts/all', async (req, res) => {
       count: deletedCount
     });
   } catch (error) {
-    console.error('Error deleting all transcripts:', error);
     res.status(500).json({
       success: false,
       error: error.message

@@ -199,6 +199,102 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_oauth_provider_user_id ON user_oauth_providers(provider_user_id);
         `);
 
+        // Course management tables
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS user_courses (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                course_start_date DATE NOT NULL,
+                course_end_date DATE NOT NULL,
+                current_week INTEGER DEFAULT 1,
+                current_day INTEGER DEFAULT 1,
+                is_active BOOLEAN DEFAULT true,
+                personalized_topics JSONB DEFAULT '[]',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_courses_active ON user_courses(is_active);
+        `);
+
+        // Daily progress tracking
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS daily_progress (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                course_id INTEGER NOT NULL,
+                week_number INTEGER NOT NULL,
+                day_number INTEGER NOT NULL,
+                date DATE NOT NULL,
+                speaking_completed BOOLEAN DEFAULT false,
+                speaking_start_time TIMESTAMP,
+                speaking_end_time TIMESTAMP,
+                speaking_duration_seconds INTEGER DEFAULT 0,
+                quiz_completed BOOLEAN DEFAULT false,
+                quiz_score INTEGER,
+                quiz_attempts INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (course_id) REFERENCES user_courses(id) ON DELETE CASCADE,
+                UNIQUE(user_id, date)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_daily_progress_user_date ON daily_progress(user_id, date);
+            CREATE INDEX IF NOT EXISTS idx_daily_progress_course ON daily_progress(course_id);
+            CREATE INDEX IF NOT EXISTS idx_daily_progress_week_day ON daily_progress(week_number, day_number);
+        `);
+
+        // Weekly exam results
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS weekly_exams (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                course_id INTEGER NOT NULL,
+                week_number INTEGER NOT NULL,
+                exam_date DATE NOT NULL,
+                exam_completed BOOLEAN DEFAULT false,
+                exam_score INTEGER,
+                exam_duration_seconds INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (course_id) REFERENCES user_courses(id) ON DELETE CASCADE,
+                UNIQUE(user_id, week_number)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_weekly_exams_user_week ON weekly_exams(user_id, week_number);
+            CREATE INDEX IF NOT EXISTS idx_weekly_exams_course ON weekly_exams(course_id);
+        `);
+
+        // Speaking sessions table for tracking multiple calls per day
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS speaking_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                course_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP,
+                duration_seconds INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (course_id) REFERENCES user_courses(id) ON DELETE CASCADE
+            );
+        `);
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_speaking_sessions_user_date ON speaking_sessions(user_id, date);
+        `);
+
         await client.query('COMMIT');
         console.log('✅ Database tables initialized successfully');
         return true;
@@ -217,6 +313,7 @@ const initTables = async () => {
         if (client) client.release();
     }
 };
+
 
 // Clean up expired sessions (utility function)
 const cleanupExpiredSessions = async () => {
