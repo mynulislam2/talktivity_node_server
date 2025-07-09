@@ -33,6 +33,26 @@ router.get('/', async (req, res) => {
   }
 });
 
+// POST /api/groups - Create a new public group
+router.post('/groups', authenticateToken, async (req, res) => {
+  const { name, description, category, is_public } = req.body;
+  const userId = req.user?.userId;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  if (!name || typeof name !== 'string' || name.trim() === '') {
+    return res.status(400).json({ success: false, error: 'Group name is required.' });
+  }
+  try {
+    const result = await pool.query(
+      'INSERT INTO groups (name, description, category, is_public, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, description || '', category || null, is_public !== false, userId]
+    );
+    res.status(201).json({ success: true, group: result.rows[0] });
+  } catch (err) {
+    console.error('Error creating group:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Join a group
 router.post('/:groupId/join', authenticateToken, async (req, res) => {
   const userId = req.user?.userId;

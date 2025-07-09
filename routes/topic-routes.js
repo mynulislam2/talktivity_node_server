@@ -85,6 +85,71 @@ router.post('/topics', async (req, res) => {
     }
 });
 
+// POST /api/topics/bulk - Add multiple topics to multiple categories in one request
+router.post('/topics/bulk', async (req, res) => {
+    let client;
+    try {
+        const categories = req.body;
+        if (!Array.isArray(categories)) {
+            return res.status(400).json({ success: false, error: 'Request body must be an array of { category, topics } objects.' });
+        }
+        client = await pool.connect();
+        const results = [];
+        for (const entry of categories) {
+            const { category, topics } = entry;
+            if (!category || typeof category !== 'string' || category.trim() === '') {
+                results.push({ category, success: false, error: 'Category name is required and must be a non-empty string.' });
+                continue;
+            }
+            if (!Array.isArray(topics) || topics.length === 0) {
+                results.push({ category, success: false, error: 'Topics must be a non-empty array.' });
+                continue;
+            }
+            // Fetch or create category
+            const existingCategoryResult = await client.query(
+                'SELECT id, topics FROM topic_categories WHERE category_name = $1',
+                [category]
+            );
+            let existingTopics = [];
+            if (existingCategoryResult.rows.length > 0) {
+                existingTopics = existingCategoryResult.rows[0].topics || [];
+            }
+            // Merge topics
+            for (const topic of topics) {
+                if (!topic.title || !topic.prompt || !topic.firstPrompt) {
+                    results.push({ category, topic: topic.title || topic.id, success: false, error: 'Each topic must have a title, prompt, and firstPrompt.' });
+                    continue;
+                }
+                const topicIndex = existingTopics.findIndex(t => t.id === topic.id);
+                if (topicIndex !== -1) {
+                    existingTopics[topicIndex] = { ...existingTopics[topicIndex], ...topic };
+                } else {
+                    existingTopics.push(topic);
+                }
+            }
+            // Upsert category
+            if (existingCategoryResult.rows.length > 0) {
+                await client.query(
+                    'UPDATE topic_categories SET topics = $2, updated_at = CURRENT_TIMESTAMP WHERE category_name = $1',
+                    [category, JSON.stringify(existingTopics)]
+                );
+            } else {
+                await client.query(
+                    'INSERT INTO topic_categories (category_name, topics) VALUES ($1, $2)',
+                    [category, JSON.stringify(existingTopics)]
+                );
+            }
+            results.push({ category, success: true, topicCount: existingTopics.length });
+        }
+        res.status(200).json({ success: true, results });
+    } catch (error) {
+        console.error('Error in bulk topic upload:', error);
+        res.status(500).json({ success: false, error: 'Internal server error', details: error.message });
+    } finally {
+        if (client) client.release();
+    }
+});
+
 // GET /api/topics - Get all topic categories
 router.get('/topics', async (req, res) => {
     let client;

@@ -70,15 +70,12 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
     );
 
     let personalizedTopics = [];
-    
-    // Generate personalized course if user has onboarding data
-    if (onboardingResult.rows.length > 0 && conversationResult.rows.length > 0) {
+
+    // New logic: If onboarding data exists, always try to generate personalized course
+    if (onboardingResult.rows.length > 0) {
       try {
         const onboardingData = onboardingResult.rows[0];
-        const conversations = conversationResult.rows.map(row => row.transcript);
-        
- 
-        
+        const conversations = conversationResult.rows.map(row => row.transcript); // may be empty
         personalizedTopics = await generatePersonalizedCourse(onboardingData, conversations);
         console.log('Personalized course generated with', personalizedTopics.length, 'topics');
       } catch (error) {
@@ -87,13 +84,7 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
         personalizedTopics = [];
       }
     } else {
-      console.log('No onboarding data or conversations found for personalized course generation');
-      if (onboardingResult.rows.length === 0) {
-        console.log('- Missing onboarding data');
-      }
-      if (conversationResult.rows.length === 0) {
-        console.log('- Missing conversation history');
-      }
+      console.log('No onboarding data found for personalized course generation');
     }
 
     // Create new course with personalized topics
