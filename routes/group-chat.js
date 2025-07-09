@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/groups - Create a new public group
-router.post('/groups', authenticateToken, async (req, res) => {
+router.post('/create', authenticateToken, async (req, res) => {
   const { name, description, category, is_public } = req.body;
   const userId = req.user?.userId;
   if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -190,6 +190,29 @@ router.get('/last-read', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, lastRead: rows });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/groups/:groupId - Delete a group (only creator can delete)
+router.delete('/groups/:groupId', authenticateToken, async (req, res) => {
+  const userId = req.user?.userId;
+  const groupId = req.params.groupId;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  try {
+    // Check if the user is the creator of the group
+    const groupResult = await pool.query('SELECT created_by FROM groups WHERE id = $1', [groupId]);
+    if (groupResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Group not found' });
+    }
+    if (groupResult.rows[0].created_by !== userId) {
+      return res.status(403).json({ success: false, error: 'Only the group creator can delete this group' });
+    }
+    // Delete the group (CASCADE will remove related members/messages)
+    await pool.query('DELETE FROM groups WHERE id = $1', [groupId]);
+    res.json({ success: true, message: 'Group deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting group:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

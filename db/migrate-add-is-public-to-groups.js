@@ -3,7 +3,7 @@ const path = require('path');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const sqlFilePath = path.join(__dirname, 'migrations', '001_create_group_chat_schema.sql');
+const sqlFilePath = path.join(__dirname, 'migrations', '003_add_is_public_to_groups.sql');
 const sql = fs.readFileSync(sqlFilePath, 'utf8');
 
 const pool = new Pool({
@@ -12,15 +12,13 @@ const pool = new Pool({
     user: process.env.PG_USER || 'postgres',
     password: process.env.PG_PASSWORD || '1234',
     database: process.env.PG_DATABASE || 'postgres',
-    ssl: {
-        rejectUnauthorized: true, // Accept self-signed certs
-      },
+    ssl: { rejectUnauthorized: true }
 });
 
 (async () => {
     const client = await pool.connect();
     try {
-        console.log('Running group chat schema migration...');
+        console.log('Running add is_public to groups migration...');
         await client.query('BEGIN');
         await client.query(sql);
         await client.query('COMMIT');

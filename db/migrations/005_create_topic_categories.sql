@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS topic_categories (
+    id SERIAL PRIMARY KEY,
+    category_name VARCHAR(255) NOT NULL UNIQUE,
+    topics JSONB DEFAULT '[]',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+); 

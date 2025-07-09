@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS groups (
     name VARCHAR(100) NOT NULL,
     description TEXT,
     category VARCHAR(50),
+    is_public BOOLEAN DEFAULT TRUE,
     cover_image VARCHAR(255),
     is_featured BOOLEAN DEFAULT FALSE,
     is_trending BOOLEAN DEFAULT FALSE,
