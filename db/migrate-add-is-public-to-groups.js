@@ -12,7 +12,6 @@ const pool = new Pool({
     user: process.env.PG_USER || 'postgres',
     password: process.env.PG_PASSWORD || '1234',
     database: process.env.PG_DATABASE || 'postgres',
-    ssl: { rejectUnauthorized: true }
 });
 
 (async () => {
