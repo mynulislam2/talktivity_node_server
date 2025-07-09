@@ -56,13 +56,26 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check if user has onboarding data and conversations for personalized course
-    // For now, we'll check for any onboarding data and conversations
-    // TODO: Add fingerprint_id to users table for proper linking
-    const onboardingResult = await client.query(
-      'SELECT * FROM onboarding_data LIMIT 1',
-      []
+    // Get user's fingerprint_id to link with onboarding data
+    const userResult = await client.query(
+      'SELECT fingerprint_id FROM users WHERE id = $1',
+      [userId]
     );
+    
+    const userFingerprint = userResult.rows[0]?.fingerprint_id;
+    
+    // Check if user has onboarding data and conversations for personalized course
+    let onboardingResult;
+    if (userFingerprint) {
+      onboardingResult = await client.query(
+        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
+        [userFingerprint]
+      );
+      console.log(`Found ${onboardingResult.rows.length} onboarding records for user ${userId} with fingerprint ${userFingerprint}`);
+    } else {
+      console.log(`No fingerprint_id found for user ${userId}, cannot link to onboarding data`);
+      onboardingResult = { rows: [] };
+    }
     
     const conversationResult = await client.query(
       'SELECT transcript FROM conversations WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 5',
@@ -901,13 +914,26 @@ router.post('/courses/generate-personalized', authenticateToken, async (req, res
     
     client = await db.pool.connect();
     
-    // Get user's onboarding data
-    // For now, we'll check for any onboarding data
-    // TODO: Add fingerprint_id to users table for proper linking
-    const onboardingResult = await client.query(
-      'SELECT * FROM onboarding_data LIMIT 1',
-      []
+    // Get user's fingerprint_id to link with onboarding data
+    const userResult = await client.query(
+      'SELECT fingerprint_id FROM users WHERE id = $1',
+      [userId]
     );
+    
+    const userFingerprint = userResult.rows[0]?.fingerprint_id;
+    
+    // Get user's onboarding data
+    let onboardingResult;
+    if (userFingerprint) {
+      onboardingResult = await client.query(
+        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
+        [userFingerprint]
+      );
+      console.log(`Found ${onboardingResult.rows.length} onboarding records for user ${userId} with fingerprint ${userFingerprint}`);
+    } else {
+      console.log(`No fingerprint_id found for user ${userId}, cannot link to onboarding data`);
+      onboardingResult = { rows: [] };
+    }
     
     if (onboardingResult.rows.length === 0) {
       return res.status(400).json({
@@ -964,7 +990,7 @@ router.post('/courses/generate-personalized', authenticateToken, async (req, res
 });
 
 // Helper function to generate personalized course using Groq AI
-async function generatePersonalizedCourse(onboardingData, conversations) {
+async function generatePersonalizedCourse(onboardingData, conversations, retryCount = 0) {
   const axios = require('axios');
   
   // Format the data for Groq AI
@@ -994,53 +1020,18 @@ async function generatePersonalizedCourse(onboardingData, conversations) {
     conversations: conversations
   };
 
+  const strictJsonWarning = retryCount === 0
+    ? 'IMPORTANT: Return ONLY a valid JSON array of exactly 7 topic objects. Do NOT include any explanations, markdown, or extra text. The response MUST start with [ and end with ].'
+    : 'RETRY: Return ONLY a valid JSON array of exactly 7 topic objects. Absolutely NO explanations, markdown, or extra text. Only the JSON array.';
+
   const messages = [
     {
       role: 'system',
-      content: `You are an expert English language curriculum designer. Create a personalized 3-month course (90 days) for an English learner based on their onboarding data and conversation history.
-
-COURSE STRUCTURE:
-- Days 1-5 of each week: Speaking practice (5 min) + Quiz
-- Day 6 of each week: Quiz only
-- Day 7 of each week: Weekly speaking exam
-
-TOPIC REQUIREMENTS:
-- Each topic must follow this EXACT structure to match the existing topics system:
-{
-  "id": "unique-id",
-  "title": "Topic Title",
-  "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Topic+Title",
-  "prompt": "Detailed conversation prompt for the AI tutor",
-  "firstPrompt": "Initial question to start the conversation",
-  "isCustom": false,
-  "category": "Personalized Topics"
-}
-
-GENERATION RULES:
-1. Create 90 unique topics (one for each day)
-2. Topics should progress from basic to advanced
-3. Focus on user's specific needs from onboarding data
-4. Incorporate their interests, work scenarios, and upcoming occasions
-5. Address their improvement areas and learning challenges
-6. Use conversation history to identify weak areas
-7. Ensure topics are relevant to their industry and goals
-8. Make topics engaging and practical for their daily life
-
-PERSONALIZATION FACTORS:
-- Current level: ${contextData.onboarding.currentLevel}
-- Native language: ${contextData.onboarding.nativeLanguage}
-- Industry: ${contextData.onboarding.industry}
-- Interests: ${contextData.onboarding.interests?.join(', ')}
-- Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}
-- Upcoming occasions: ${contextData.onboarding.upcomingOccasions?.join(', ')}
-- Improvement areas: ${contextData.onboarding.improvementAreas?.join(', ')}
-- Main goal: ${contextData.onboarding.mainGoal}
-
-IMPORTANT: You must return ONLY a valid JSON array containing exactly 90 topic objects. Do not include any explanatory text, markdown formatting, or additional content outside the JSON array. The response should start with '[' and end with ']'.`
+      content: `You are an expert English language curriculum designer. Create a personalized 1-week course (7 days) for an English learner based on their onboarding data and conversation history.\n\nCOURSE STRUCTURE:\n- Days 1-5 of the week: Speaking practice (5 min) + Quiz\n- Day 6: Quiz only\n- Day 7: Weekly speaking exam\n\nTOPIC REQUIREMENTS:\n- Each topic must follow this EXACT structure to match the existing topics system:\n{\n  "id": "unique-id",\n  "title": "Topic Title",\n  "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Topic+Title",\n  "prompt": "Detailed conversation prompt for the AI tutor",\n  "firstPrompt": "Initial question to start the conversation",\n  "isCustom": false,\n  "category": "Personalized Topics"\n}\n\nGENERATION RULES:\n1. Create 7 unique topics (one for each day)\n2. Topics should progress from basic to advanced\n3. Focus on user's specific needs from onboarding data\n4. Incorporate their interests, work scenarios, and upcoming occasions\n5. Address their improvement areas and learning challenges\n6. Use conversation history to identify weak areas\n7. Ensure topics are relevant to their industry and goals\n8. Make topics engaging and practical for their daily life\n\nPERSONALIZATION FACTORS:\n- Current level: ${contextData.onboarding.currentLevel}\n- Native language: ${contextData.onboarding.nativeLanguage}\n- Industry: ${contextData.onboarding.industry}\n- Interests: ${contextData.onboarding.interests?.join(', ')}\n- Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}\n- Upcoming occasions: ${contextData.onboarding.upcomingOccasions?.join(', ')}\n- Improvement areas: ${contextData.onboarding.improvementAreas?.join(', ')}\n- Main goal: ${contextData.onboarding.mainGoal}\n\n${strictJsonWarning}`
     },
     {
       role: 'user',
-      content: `Generate a personalized 3-month course based on this user data: ${JSON.stringify(contextData)}`
+      content: `Generate a personalized 1-week course based on this user data: ${JSON.stringify(contextData)}`
     }
   ];
 
@@ -1066,25 +1057,33 @@ IMPORTANT: You must return ONLY a valid JSON array containing exactly 90 topic o
     const response = await axios.post(url, payload, { headers });
     if (response.data.choices && response.data.choices.length > 0) {
       const contentString = response.data.choices[0].message.content;
-      
-      // Try to extract JSON from the response
       try {
-        // First try direct JSON parsing
+        // Try direct JSON parsing
         return JSON.parse(contentString);
       } catch (parseError) {
-        // If direct parsing fails, try to extract JSON from the text
+        // Try to extract JSON array from the text
         const jsonMatch = contentString.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           try {
             return JSON.parse(jsonMatch[0]);
           } catch (extractError) {
             console.error('Failed to extract JSON from response:', extractError);
-            console.error('Response content:', contentString);
-            throw new Error('Invalid JSON format in AI response');
+            console.error('Raw Groq response:', contentString);
+            if (retryCount < 2) {
+              console.warn('Retrying Groq request for better JSON...');
+              await new Promise(res => setTimeout(res, 2000)); // Wait 2 seconds before retry
+              return await generatePersonalizedCourse(onboardingData, conversations, retryCount + 1);
+            }
+            throw new Error('Invalid JSON format in AI response after retries');
           }
         } else {
           console.error('No JSON array found in response:', contentString);
-          throw new Error('No JSON array found in AI response');
+          if (retryCount < 2) {
+            console.warn('Retrying Groq request for better JSON...');
+            await new Promise(res => setTimeout(res, 2000));
+            return await generatePersonalizedCourse(onboardingData, conversations, retryCount + 1);
+          }
+          throw new Error('No JSON array found in AI response after retries');
         }
       }
     } else {

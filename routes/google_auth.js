@@ -16,7 +16,7 @@ const client = new OAuth2Client(
 router.post('/google', async (req, res) => {
   let dbClient;
   try {
-    const { code } = req.body;
+    const { code, fingerprint_id } = req.body;
     
     if (!code) {
       return res.status(400).json({
@@ -77,15 +77,25 @@ router.post('/google', async (req, res) => {
         user.profile_picture = picture;
       }
       
+      // Update fingerprint_id if provided and different
+      if (fingerprint_id && fingerprint_id !== user.fingerprint_id) {
+        await dbClient.query(
+          'UPDATE users SET fingerprint_id = $1, updated_at = NOW() WHERE id = $2',
+          [fingerprint_id, user.id]
+        );
+        console.log(`Updated fingerprint_id for user ${user.id}: ${fingerprint_id}`);
+        user.fingerprint_id = fingerprint_id;
+      }
+      
       console.log('✅ Existing user logged in:', user.id);
     } else {
       // User doesn't exist, create new user
       console.log('🆕 Creating new user with email:', email);
       const insertResult = await dbClient.query(
-        `INSERT INTO users (email, full_name, google_id, profile_picture, password) 
-         VALUES ($1, $2, $3, $4, $5) 
-         RETURNING id, email, full_name, google_id, profile_picture, created_at`,
-        [email, name, googleId, picture, ''] // Empty password for Google users
+        `INSERT INTO users (email, full_name, google_id, profile_picture, password, fingerprint_id) 
+         VALUES ($1, $2, $3, $4, $5, $6) 
+         RETURNING id, email, full_name, google_id, profile_picture, fingerprint_id, created_at`,
+        [email, name, googleId, picture, '', fingerprint_id] // Empty password for Google users
       );
       
       user = insertResult.rows[0];
@@ -107,17 +117,18 @@ router.post('/google', async (req, res) => {
     res.json({
       success: true,
       message: 'Google authentication successful',
-      data: {
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          full_name: user.full_name,
-          profile_picture: user.profile_picture,
-          google_id: user.google_id,
-          authProvider: 'google'
+              data: {
+          token,
+          user: {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            profile_picture: user.profile_picture,
+            google_id: user.google_id,
+            fingerprint_id: user.fingerprint_id,
+            authProvider: 'google'
+          }
         }
-      }
     });
 
   } catch (error) {

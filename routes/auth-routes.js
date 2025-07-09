@@ -131,7 +131,7 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
 router.post('/login', validateEmail, async (req, res) => {
   let client;
   try {
-    const { email, password } = req.body;
+    const { email, password, fingerprint_id } = req.body;
 
     // Get a client from the pool
     client = await pool.connect();
@@ -166,6 +166,15 @@ router.post('/login', validateEmail, async (req, res) => {
       });
     }
 
+    // Update user's fingerprint_id if provided
+    if (fingerprint_id && fingerprint_id !== user.fingerprint_id) {
+      await client.query(
+        'UPDATE users SET fingerprint_id = $1, updated_at = NOW() WHERE id = $2',
+        [fingerprint_id, user.id]
+      );
+      console.log(`Updated fingerprint_id for user ${user.id}: ${fingerprint_id}`);
+    }
+
     // Generate JWT token
     const token = jwt.sign(
       { userId: user?.id, email: user?.email },
@@ -181,7 +190,8 @@ router.post('/login', validateEmail, async (req, res) => {
         user: {
           id: user.id,
           email: user.email,
-          full_name: user.full_name
+          full_name: user.full_name,
+          fingerprint_id: fingerprint_id || user.fingerprint_id
         }
       }
     });

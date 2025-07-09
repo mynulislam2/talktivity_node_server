@@ -33,10 +33,10 @@ app.use(express.json({ limit: '10mb' })); // Limit payload size
   
 // }));
 app.use(cors({
-  origin: '*',
+  origin: ['http://localhost:3000', 'https://talktivity-node-server.onrender.com'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true // ✅ Only if you use cookies or auth headers
+  credentials: true, // ✅ Only if you use cookies or auth headers
 }));
 // Request logging middleware (simple)
 app.use((req, res, next) => {
@@ -94,7 +94,7 @@ const server = http.createServer(app);
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: ['http://localhost:3000', 'https://talktivity-node-server.onrender.com'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
   }
