@@ -33,7 +33,7 @@ app.use(express.json({ limit: '10mb' })); // Limit payload size
   
 // }));
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://talktivity-node-server.onrender.com'],
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true, // ✅ Only if you use cookies or auth headers
