@@ -1095,6 +1095,113 @@ async function generatePersonalizedCourse(onboardingData, conversations, retryCo
   }
 }
 
+// Get full course timeline with all personalized topics
+router.get('/courses/timeline', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const userId = req.user.id;
+
+    // Get user's active course
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const course = courseResult.rows[0];
+
+    // Calculate current week and day
+    const courseStart = new Date(course.course_start_date);
+    const daysSinceStart = Math.floor((new Date() - courseStart) / (1000 * 60 * 60 * 24));
+    const currentWeek = Math.floor(daysSinceStart / 7) + 1;
+    const currentDay = (daysSinceStart % 7) + 1;
+
+    // Get all daily progress for this course
+    const progressResult = await client.query(
+      'SELECT * FROM daily_progress WHERE user_id = $1 AND course_id = $2 ORDER BY date',
+      [userId, course.id]
+    );
+
+    const progressMap = {};
+    progressResult.rows.forEach(progress => {
+      progressMap[progress.date] = progress;
+    });
+
+    // Build timeline with all 84 days
+    const timeline = [];
+    const personalizedTopics = course.personalized_topics || [];
+
+    for (let week = 1; week <= 12; week++) {
+      for (let day = 1; day <= 7; day++) {
+        const dayIndex = (week - 1) * 7 + (day - 1);
+        const date = new Date(courseStart);
+        date.setDate(date.getDate() + dayIndex);
+        const dateStr = date.toISOString().split('T')[0];
+        
+        const dayType = getDayType(day);
+        const personalizedTopic = dayIndex < personalizedTopics.length ? personalizedTopics[dayIndex] : null;
+        const progress = progressMap[dateStr] || null;
+        
+        const isCompleted = progress && (
+          (dayType === 'speaking_quiz' && progress.speaking_completed && progress.quiz_completed) ||
+          (dayType === 'quiz_only' && progress.quiz_completed) ||
+          (dayType === 'speaking_exam' && progress.speaking_completed)
+        );
+
+        const isCurrentDay = week === currentWeek && day === currentDay;
+        const isPast = date < new Date();
+
+        timeline.push({
+          week: week,
+          day: day,
+          dayIndex: dayIndex,
+          date: dateStr,
+          dayType: dayType,
+          personalizedTopic: personalizedTopic,
+          progress: progress,
+          isCompleted: isCompleted,
+          isCurrentDay: isCurrentDay,
+          isPast: isPast,
+          isFuture: date > new Date()
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        course: {
+          id: course.id,
+          startDate: course.course_start_date,
+          endDate: course.course_end_date,
+          currentWeek: currentWeek,
+          currentDay: currentDay,
+          totalWeeks: 12,
+          totalDays: 84
+        },
+        timeline: timeline,
+        personalizedTopicsCount: personalizedTopics.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting course timeline:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get course timeline'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 // Get today's personalized topic for practice
 router.get('/courses/today-topic', authenticateToken, async (req, res) => {
   let client;
