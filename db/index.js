@@ -210,6 +210,7 @@ const initTables = async () => {
                 current_day INTEGER DEFAULT 1,
                 is_active BOOLEAN DEFAULT true,
                 personalized_topics JSONB DEFAULT '[]',
+                batch_number INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
