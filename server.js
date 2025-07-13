@@ -97,13 +97,20 @@ const io = new Server(server, {
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
-  }
+  },
+  transports: ['websocket', 'polling'], // Allow both WebSocket and polling
+  allowEIO3: true, // Allow Engine.IO v3 clients
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 // In-memory presence map: userId -> { socketId, lastSeen }
 const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
+  console.log('[Socket.IO] New connection established:', socket.id);
+  console.log('[Socket.IO] Transport:', socket.conn.transport.name);
+  
   // Expect userId in handshake query for presence
   const userId = socket.handshake.query.userId;
   if (userId) {
@@ -203,7 +210,8 @@ io.on('connection', (socket) => {
     } catch (err) {}
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
+    console.log('[Socket.IO] Client disconnected:', socket.id, 'Reason:', reason);
     if (userId) {
       onlineUsers.delete(userId);
       const lastSeen = new Date().toISOString();
@@ -236,6 +244,7 @@ const startServer = async () => {
     server.listen(port, () => {
       // Remove any debug logging or temporary debug code
       console.log(`Server running on http://localhost:${port}`);
+      console.log(`WebSocket server ready on ws://localhost:${port}`);
       console.log(`
 Available routes:
   Authentication:
