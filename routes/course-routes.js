@@ -1259,6 +1259,419 @@ router.get('/courses/today-topic', authenticateToken, async (req, res) => {
   }
 });
 
+// Enhanced progress analytics endpoint
+router.get('/courses/analytics', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const userId = req.user.id;
+
+    // Get user's active course
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const course = courseResult.rows[0];
+
+    // Get comprehensive analytics
+    const analytics = await client.query(`
+      SELECT 
+        -- Overall progress
+        COUNT(*) as total_days,
+        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
+        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+        AVG(quiz_score) as avg_quiz_score,
+        
+        -- Streak calculations
+        MAX(CASE WHEN speaking_completed = true THEN date END) as last_speaking_date,
+        MAX(CASE WHEN quiz_completed = true THEN date END) as last_quiz_date,
+        
+        -- Weekly averages
+        AVG(CASE WHEN quiz_completed = true THEN quiz_score END) as weekly_avg_quiz,
+        
+        -- Time spent
+        SUM(speaking_duration_seconds) as total_speaking_time,
+        AVG(speaking_duration_seconds) as avg_speaking_time
+        
+      FROM daily_progress 
+      WHERE user_id = $1 AND course_id = $2
+    `, [userId, course.id]);
+
+    // Get weekly exam performance
+    const weeklyExams = await client.query(`
+      SELECT week_number, exam_score, exam_date, exam_duration_seconds
+      FROM weekly_exams 
+      WHERE user_id = $1 AND course_id = $2
+      ORDER BY week_number
+    `, [userId, course.id]);
+
+    // Get speaking session details
+    const speakingSessions = await client.query(`
+      SELECT date, duration_seconds, start_time, end_time
+      FROM speaking_sessions
+      WHERE user_id = $1 AND course_id = $2
+      ORDER BY date DESC
+      LIMIT 30
+    `, [userId, course.id]);
+
+    // Calculate current streak
+    const streakResult = await client.query(`
+      WITH consecutive_days AS (
+        SELECT date,
+               ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
+               date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+        FROM daily_progress
+        WHERE user_id = $1 AND course_id = $2 AND speaking_completed = true
+      )
+      SELECT COUNT(*) as current_streak
+      FROM consecutive_days
+      WHERE grp = (SELECT grp FROM consecutive_days WHERE date = CURRENT_DATE)
+    `, [userId, course.id]);
+
+    // Get monthly trends (last 6 months)
+    const monthlyTrends = await client.query(`
+      SELECT 
+        EXTRACT(YEAR FROM date) as year,
+        EXTRACT(MONTH FROM date) as month,
+        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
+        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+        AVG(quiz_score) as avg_quiz_score,
+        SUM(speaking_duration_seconds) as total_speaking_time
+      FROM daily_progress
+      WHERE user_id = $1 AND course_id = $2 
+        AND date >= CURRENT_DATE - INTERVAL '6 months'
+      GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
+      ORDER BY year DESC, month DESC
+    `, [userId, course.id]);
+
+    // Get skill improvement trends
+    const skillTrends = await client.query(`
+      SELECT 
+        week_number,
+        AVG(quiz_score) as avg_score,
+        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quizzes_taken
+      FROM daily_progress
+      WHERE user_id = $1 AND course_id = $2 AND quiz_completed = true
+      GROUP BY week_number
+      ORDER BY week_number
+    `, [userId, course.id]);
+
+    const analyticsData = analytics.rows[0];
+    const currentStreak = streakResult.rows[0]?.current_streak || 0;
+
+    res.json({
+      success: true,
+      data: {
+        course: {
+          id: course.id,
+          startDate: course.course_start_date,
+          endDate: course.course_end_date,
+          currentWeek: course.current_week,
+          currentDay: course.current_day
+        },
+        progress: {
+          total_days: parseInt(analyticsData.total_days) || 0,
+          speaking_days: parseInt(analyticsData.speaking_days) || 0,
+          quiz_days: parseInt(analyticsData.quiz_days) || 0,
+          avg_quiz_score: parseFloat(analyticsData.avg_quiz_score) || 0,
+          current_streak: currentStreak,
+          total_speaking_time: parseInt(analyticsData.total_speaking_time) || 0,
+          avg_speaking_time: parseFloat(analyticsData.avg_speaking_time) || 0,
+          last_speaking_date: analyticsData.last_speaking_date,
+          last_quiz_date: analyticsData.last_quiz_date
+        },
+        weeklyExams: weeklyExams.rows,
+        speakingSessions: speakingSessions.rows,
+        monthlyTrends: monthlyTrends.rows,
+        skillTrends: skillTrends.rows
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting course analytics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get course analytics'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Enhanced user achievements endpoint
+router.get('/courses/achievements', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const userId = req.user.id;
+
+    // Get user's active course
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const course = courseResult.rows[0];
+
+    // Calculate various achievements
+    const achievements = await client.query(`
+      SELECT 
+        -- Streak achievements
+        (SELECT COUNT(*) FROM (
+          WITH consecutive_days AS (
+            SELECT date,
+                   ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
+                   date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+            FROM daily_progress
+            WHERE user_id = $1 AND course_id = $2 AND speaking_completed = true
+          )
+          SELECT COUNT(*) as streak_length
+          FROM consecutive_days
+          WHERE grp = (SELECT grp FROM consecutive_days WHERE date = CURRENT_DATE)
+        ) t) as current_streak,
+        
+        -- Perfect scores
+        COUNT(CASE WHEN quiz_score = 100 THEN 1 END) as perfect_scores,
+        
+        -- High scores (80+)
+        COUNT(CASE WHEN quiz_score >= 80 THEN 1 END) as high_scores,
+        
+        -- Total sessions
+        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as total_sessions,
+        
+        -- Total quizzes
+        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as total_quizzes,
+        
+        -- Weekly exams passed
+        (SELECT COUNT(*) FROM weekly_exams WHERE user_id = $1 AND course_id = $2 AND exam_score >= 60) as exams_passed,
+        
+        -- Total speaking time
+        SUM(speaking_duration_seconds) as total_speaking_time
+        
+      FROM daily_progress 
+      WHERE user_id = $1 AND course_id = $2
+    `, [userId, course.id]);
+
+    const achievementData = achievements.rows[0];
+    const currentStreak = parseInt(achievementData.current_streak) || 0;
+    const perfectScores = parseInt(achievementData.perfect_scores) || 0;
+    const highScores = parseInt(achievementData.high_scores) || 0;
+    const totalSessions = parseInt(achievementData.total_sessions) || 0;
+    const totalQuizzes = parseInt(achievementData.total_quizzes) || 0;
+    const examsPassed = parseInt(achievementData.exams_passed) || 0;
+    const totalSpeakingTime = parseInt(achievementData.total_speaking_time) || 0;
+
+    // Define achievement badges
+    const badges = [
+      {
+        id: 'streak_7',
+        name: '7-Day Streak',
+        description: 'Complete 7 consecutive days of speaking practice',
+        icon: '🔥',
+        unlocked: currentStreak >= 7,
+        progress: Math.min(100, (currentStreak / 7) * 100)
+      },
+      {
+        id: 'streak_30',
+        name: '30-Day Streak',
+        description: 'Complete 30 consecutive days of speaking practice',
+        icon: '🏆',
+        unlocked: currentStreak >= 30,
+        progress: Math.min(100, (currentStreak / 30) * 100)
+      },
+      {
+        id: 'perfect_score',
+        name: 'Perfect Score',
+        description: 'Get a perfect score on any quiz',
+        icon: '⭐',
+        unlocked: perfectScores > 0,
+        progress: perfectScores > 0 ? 100 : 0
+      },
+      {
+        id: 'high_achiever',
+        name: 'High Achiever',
+        description: 'Get 5 scores of 80% or higher',
+        icon: '🎯',
+        unlocked: highScores >= 5,
+        progress: Math.min(100, (highScores / 5) * 100)
+      },
+      {
+        id: 'dedicated_learner',
+        name: 'Dedicated Learner',
+        description: 'Complete 20 speaking sessions',
+        icon: '📚',
+        unlocked: totalSessions >= 20,
+        progress: Math.min(100, (totalSessions / 20) * 100)
+      },
+      {
+        id: 'quiz_master',
+        name: 'Quiz Master',
+        description: 'Complete 10 quizzes',
+        icon: '🧠',
+        unlocked: totalQuizzes >= 10,
+        progress: Math.min(100, (totalQuizzes / 10) * 100)
+      },
+      {
+        id: 'exam_champion',
+        name: 'Exam Champion',
+        description: 'Pass 3 weekly exams',
+        icon: '🏅',
+        unlocked: examsPassed >= 3,
+        progress: Math.min(100, (examsPassed / 3) * 100)
+      },
+      {
+        id: 'time_master',
+        name: 'Time Master',
+        description: 'Spend 5 hours total speaking time',
+        icon: '⏰',
+        unlocked: totalSpeakingTime >= 18000, // 5 hours in seconds
+        progress: Math.min(100, (totalSpeakingTime / 18000) * 100)
+      }
+    ];
+
+    // Calculate user level and XP
+    const totalXP = (totalSessions * 10) + (totalQuizzes * 15) + (examsPassed * 50) + (currentStreak * 5);
+    const userLevel = Math.floor(totalXP / 100) + 1;
+    const xpForNextLevel = userLevel * 100;
+    const xpProgress = (totalXP % 100) / 100 * 100;
+
+    res.json({
+      success: true,
+      data: {
+        badges,
+        level: {
+          current: userLevel,
+          xp: totalXP,
+          xpForNextLevel,
+          xpProgress: Math.round(xpProgress)
+        },
+        stats: {
+          currentStreak,
+          perfectScores,
+          highScores,
+          totalSessions,
+          totalQuizzes,
+          examsPassed,
+          totalSpeakingTime
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting achievements:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get achievements'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Enhanced weekly progress endpoint
+router.get('/courses/weekly-progress', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const userId = req.user.id;
+    const { week } = req.query;
+
+    // Get user's active course
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const course = courseResult.rows[0];
+    const targetWeek = week ? parseInt(week) : course.current_week;
+
+    // Get weekly progress data
+    const weeklyProgress = await client.query(`
+      SELECT 
+        day_number,
+        date,
+        speaking_completed,
+        quiz_completed,
+        quiz_score,
+        speaking_duration_seconds,
+        quiz_attempts
+      FROM daily_progress
+      WHERE user_id = $1 AND course_id = $2 AND week_number = $3
+      ORDER BY day_number
+    `, [userId, course.id, targetWeek]);
+
+    // Get weekly exam if exists
+    const weeklyExam = await client.query(`
+      SELECT exam_score, exam_date, exam_duration_seconds
+      FROM weekly_exams
+      WHERE user_id = $1 AND course_id = $2 AND week_number = $3
+    `, [userId, course.id, targetWeek]);
+
+    // Calculate weekly statistics
+    const weeklyStats = await client.query(`
+      SELECT 
+        COUNT(*) as total_days,
+        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
+        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+        AVG(quiz_score) as avg_quiz_score,
+        SUM(speaking_duration_seconds) as total_speaking_time,
+        MAX(quiz_score) as best_quiz_score
+      FROM daily_progress
+      WHERE user_id = $1 AND course_id = $2 AND week_number = $3
+    `, [userId, course.id, targetWeek]);
+
+    const stats = weeklyStats.rows[0];
+
+    res.json({
+      success: true,
+      data: {
+        week: targetWeek,
+        progress: weeklyProgress.rows,
+        exam: weeklyExam.rows[0] || null,
+        stats: {
+          total_days: parseInt(stats.total_days) || 0,
+          speaking_days: parseInt(stats.speaking_days) || 0,
+          quiz_days: parseInt(stats.quiz_days) || 0,
+          avg_quiz_score: parseFloat(stats.avg_quiz_score) || 0,
+          total_speaking_time: parseInt(stats.total_speaking_time) || 0,
+          best_quiz_score: parseInt(stats.best_quiz_score) || 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting weekly progress:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get weekly progress'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 // Helper functions
 function getDayType(dayNumber) {
   if (dayNumber >= 1 && dayNumber <= 5) {
