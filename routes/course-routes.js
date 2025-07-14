@@ -37,24 +37,43 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
     
     const userId = req.user.id;
     console.log('User ID:', userId);
-    
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
 
-    // Check if user already has an active course
+    // Check if user already has an active course with personalized topics
     const existingCourse = await client.query(
-      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      `SELECT * FROM user_courses 
+       WHERE user_id = $1 AND is_active = true 
+       AND personalized_topics IS NOT NULL 
+       AND jsonb_array_length(personalized_topics) > 0`,
       [userId]
     );
 
     if (existingCourse.rows.length > 0) {
-      console.log('User already has an active course');
-      return res.status(400).json({
-        success: false,
-        error: 'User already has an active course'
+      // Already has a valid personalized course, return it
+      return res.status(200).json({
+        success: true,
+        data: {
+          ...existingCourse.rows[0],
+          personalizedTopicsCount: existingCourse.rows[0].personalized_topics.length
+        },
+        message: 'Personalized course already exists'
       });
     }
+    
+    // Deactivate all previous active courses for this user
+    await client.query(
+      'UPDATE user_courses SET is_active = false WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    // Remove any course for this user that has no personalized topics (cleanup bad state)
+    await client.query(
+      `DELETE FROM user_courses WHERE user_id = $1 AND (personalized_topics IS NULL OR jsonb_array_length(personalized_topics) = 0)`,
+      [userId]
+    );
+
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
 
     // Get user's fingerprint_id to link with onboarding data
     const userResult = await client.query(
@@ -84,7 +103,7 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
 
     let personalizedTopics = [];
 
-    // New logic: If onboarding data exists, always try to generate personalized course
+    // Only proceed if onboarding data exists
     if (onboardingResult.rows.length > 0) {
       try {
         const onboardingData = onboardingResult.rows[0];
@@ -93,17 +112,32 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
         console.log('Personalized course generated with', personalizedTopics.length, 'topics');
       } catch (error) {
         console.error('Error generating personalized course:', error);
-        // Continue with empty personalized topics if generation fails
-        personalizedTopics = [];
+        // If generation fails, do not create a course
+        return res.status(400).json({
+          success: false,
+          error: 'Failed to generate personalized course. Please complete onboarding and try again.'
+        });
       }
     } else {
-      console.log('No onboarding data found for personalized course generation');
+      // No onboarding data, do not create a course
+      return res.status(400).json({
+        success: false,
+        error: 'Onboarding data not found. Please complete onboarding first.'
+      });
+    }
+
+    // Only create course if personalized topics are generated
+    if (!personalizedTopics || personalizedTopics.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personalized topics could not be generated. Please retry after completing onboarding.'
+      });
     }
 
     // Create new course with personalized topics
     const result = await client.query(
-      `INSERT INTO user_courses (user_id, course_start_date, course_end_date, current_week, current_day, personalized_topics)
-       VALUES ($1, $2, $3, 1, 1, $4)
+      `INSERT INTO user_courses (user_id, course_start_date, course_end_date, current_week, current_day, is_active, personalized_topics)
+       VALUES ($1, $2, $3, 1, 1, true, $4)
        RETURNING *`,
       [userId, startDate, endDate, JSON.stringify(personalizedTopics)]
     );
