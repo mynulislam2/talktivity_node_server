@@ -2,10 +2,10 @@ require('dotenv').config();
 const { Pool } = require('pg');
 
 const pool = new Pool({
-    host: process.env.PG_HOST || 'localhost',
-    port: parseInt(process.env.PG_PORT || '5433'),
-    user: process.env.PG_USER || 'postgres',
-    password: process.env.PG_PASSWORD || '1234',
+    host: process.env.PG_HOST,
+    port: parseInt(process.env.PG_PORT),
+    user: process.env.PG_USER,
+    password: process.env.PG_PASSWORD,
     database: process.env.PG_DATABASE || 'postgres',
     ssl: {
         rejectUnauthorized: false
@@ -44,28 +44,36 @@ async function nuclearReset() {
 
         console.log('\n🔄 Proceeding with nuclear reset...');
 
-        // Drop all tables
-        console.log('\n🗑️  Dropping all tables...');
-        const dropQueries = [
-            'DROP TABLE IF EXISTS speaking_sessions CASCADE',
-            'DROP TABLE IF EXISTS weekly_exams CASCADE',
-            'DROP TABLE IF EXISTS daily_progress CASCADE',
-            'DROP TABLE IF EXISTS user_courses CASCADE',
-            'DROP TABLE IF EXISTS user_oauth_providers CASCADE',
-            'DROP TABLE IF EXISTS user_sessions CASCADE',
-            'DROP TABLE IF EXISTS onboarding_data CASCADE',
-            'DROP TABLE IF EXISTS conversations CASCADE',
-            'DROP TABLE IF EXISTS device_conversations CASCADE',
-            'DROP TABLE IF EXISTS users CASCADE'
-        ];
-
-        for (const query of dropQueries) {
-            try {
-                await client.query(query);
-                console.log(`✅ Dropped table: ${query.split(' ')[4]}`);
-            } catch (error) {
-                console.log(`⚠️  Error dropping table: ${error.message}`);
+        // Dynamically drop all tables in the public schema
+        const dynamicDropTables = async () => {
+            const tables = await client.query(`
+                SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+            `);
+            for (const row of tables.rows) {
+                try {
+                    await client.query(`DROP TABLE IF EXISTS "${row.tablename}" CASCADE`);
+                    console.log(`✅ Dropped table: ${row.tablename}`);
+                } catch (error) {
+                    console.log(`⚠️  Error dropping table ${row.tablename}: ${error.message}`);
+                }
             }
+        };
+        await dynamicDropTables();
+
+        // Remove all large objects (BLOBs)
+        try {
+            await client.query('SELECT lo_unlink(oid) FROM pg_largeobject_metadata');
+            console.log('✅ Removed all large objects');
+        } catch (error) {
+            console.log(`⚠️  Error removing large objects: ${error.message}`);
+        }
+
+        // Reclaim disk space
+        try {
+            await client.query('VACUUM FULL');
+            console.log('✅ VACUUM FULL completed, disk space reclaimed');
+        } catch (error) {
+            console.log(`⚠️  Error running VACUUM FULL: ${error.message}`);
         }
 
         // Recreate all tables

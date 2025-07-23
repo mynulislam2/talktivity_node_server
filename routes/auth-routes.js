@@ -175,6 +175,21 @@ router.post('/login', validateEmail, async (req, res) => {
       console.log(`Updated fingerprint_id for user ${user.id}: ${fingerprint_id}`);
     }
 
+    // After successful login or signup, link device_id to user
+    const deviceId = req.body.device_id || req.body.fingerprint_id;
+    if (deviceId && user && user.id) {
+      try {
+        await client.query(`
+          INSERT INTO user_devices (user_id, device_id, last_used)
+          VALUES ($1, $2, NOW())
+          ON CONFLICT (user_id, device_id) DO UPDATE SET last_used = NOW()`,
+          [user.id, deviceId]
+        );
+      } catch (err) {
+        console.error('Failed to link device_id to user:', err);
+      }
+    }
+
     // Generate JWT token
     const token = jwt.sign(
       { userId: user?.id, email: user?.email },
@@ -203,6 +218,25 @@ router.post('/login', validateEmail, async (req, res) => {
     });
   } finally {
     if (client) client.release(); // Always release the client back to the pool
+  }
+});
+
+// GET /users/:id/devices - return all device IDs for a user
+router.get('/users/:id/devices', async (req, res) => {
+  let client;
+  try {
+    client = await pool.connect();
+    const userId = req.params.id;
+    const result = await client.query(
+      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
+      [userId]
+    );
+    const deviceIds = result.rows.map(row => row.device_id);
+    res.json({ success: true, deviceIds });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    if (client) client.release();
   }
 });
 

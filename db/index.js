@@ -14,6 +14,9 @@ const pool = new Pool({
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
     connectionTimeoutMillis: 2000, // How long to wait for a connection to become available
 
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 // Handle pool errors globally
@@ -100,6 +103,17 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
             CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
+        `);
+
+        // User devices table for tracking all devices per user
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS user_devices (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                device_id VARCHAR(255) NOT NULL,
+                last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, device_id)
+            );
         `);
 
         // Conversations table with indices

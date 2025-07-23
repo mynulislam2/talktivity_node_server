@@ -6,7 +6,7 @@ async function testPersonalizedCourseGeneration() {
     console.log('🧪 Testing personalized course generation...');
     
     // Test the course initialization endpoint
-    const response = await axios.post('https://talktivity-node-server.onrender.com/api/courses/initialize', {}, {
+    const response = await axios.post('http://localhost:8082/api/courses/initialize', {}, {
       headers: {
         'Authorization': 'Bearer test-token',
         'Content-Type': 'application/json'
@@ -45,7 +45,7 @@ async function testCourseStatus() {
   try {
     console.log('\n🧪 Testing course status...');
     
-    const response = await axios.get('https://talktivity-node-server.onrender.com/api/courses/status', {
+    const response = await axios.get('http://localhost:8082/api/courses/status', {
       headers: {
         'Authorization': 'Bearer test-token'
       }

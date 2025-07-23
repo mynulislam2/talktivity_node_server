@@ -83,17 +83,36 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
     
     const userFingerprint = userResult.rows[0]?.fingerprint_id;
     
-    // Check if user has onboarding data and conversations for personalized course
-    let onboardingResult;
+    // Get all device IDs for the user
+    const deviceIdsResult = await client.query(
+      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
+      [userId]
+    );
+    const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
+    // Try current device ID (from users.fingerprint_id), recent, then all
+    let onboardingResult = { rows: [] };
     if (userFingerprint) {
       onboardingResult = await client.query(
         'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
         [userFingerprint]
       );
-      console.log(`Found ${onboardingResult.rows.length} onboarding records for user ${userId} with fingerprint ${userFingerprint}`);
-    } else {
-      console.log(`No fingerprint_id found for user ${userId}, cannot link to onboarding data`);
-      onboardingResult = { rows: [] };
+    }
+    if ((!onboardingResult.rows || onboardingResult.rows.length === 0) && deviceIds.length > 0) {
+      // Try recent device ID (second most recent if available)
+      if (deviceIds.length > 1) {
+        const recentDeviceId = deviceIds[1];
+        onboardingResult = await client.query(
+          'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
+          [recentDeviceId]
+        );
+      }
+      // If still not found, try all device IDs
+      if ((!onboardingResult.rows || onboardingResult.rows.length === 0)) {
+        onboardingResult = await client.query(
+          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
+          [deviceIds]
+        );
+      }
     }
     
     const conversationResult = await client.query(
@@ -956,17 +975,36 @@ router.post('/courses/generate-personalized', authenticateToken, async (req, res
     
     const userFingerprint = userResult.rows[0]?.fingerprint_id;
     
-    // Get user's onboarding data
-    let onboardingResult;
+    // Get all device IDs for the user
+    const deviceIdsResult = await client.query(
+      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
+      [userId]
+    );
+    const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
+    // Try current device ID (from users.fingerprint_id), recent, then all
+    let onboardingResult = { rows: [] };
     if (userFingerprint) {
       onboardingResult = await client.query(
         'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
         [userFingerprint]
       );
-      console.log(`Found ${onboardingResult.rows.length} onboarding records for user ${userId} with fingerprint ${userFingerprint}`);
-    } else {
-      console.log(`No fingerprint_id found for user ${userId}, cannot link to onboarding data`);
-      onboardingResult = { rows: [] };
+    }
+    if ((!onboardingResult.rows || onboardingResult.rows.length === 0) && deviceIds.length > 0) {
+      // Try recent device ID (second most recent if available)
+      if (deviceIds.length > 1) {
+        const recentDeviceId = deviceIds[1];
+        onboardingResult = await client.query(
+          'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
+          [recentDeviceId]
+        );
+      }
+      // If still not found, try all device IDs
+      if ((!onboardingResult.rows || onboardingResult.rows.length === 0)) {
+        onboardingResult = await client.query(
+          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
+          [deviceIds]
+        );
+      }
     }
     
     if (onboardingResult.rows.length === 0) {
@@ -1061,7 +1099,93 @@ async function generatePersonalizedCourse(onboardingData, conversations, retryCo
   const messages = [
     {
       role: 'system',
-      content: `You are an expert English language curriculum designer. Create a personalized 1-week course (7 days) for an English learner based on their onboarding data and conversation history.\n\nCOURSE STRUCTURE:\n- Days 1-5 of the week: Speaking practice (5 min) + Quiz\n- Day 6: Quiz only\n- Day 7: Weekly speaking exam\n\nTOPIC REQUIREMENTS:\n- Each topic must follow this EXACT structure to match the existing topics system:\n{\n  "id": "unique-id",\n  "title": "Topic Title",\n  "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Topic+Title",\n  "prompt": "Detailed conversation prompt for the AI tutor",\n  "firstPrompt": "Initial question to start the conversation",\n  "isCustom": false,\n  "category": "Personalized Topics"\n}\n\nGENERATION RULES:\n1. Create 7 unique topics (one for each day)\n2. Topics should progress from basic to advanced\n3. Focus on user's specific needs from onboarding data\n4. Incorporate their interests, work scenarios, and upcoming occasions\n5. Address their improvement areas and learning challenges\n6. Use conversation history to identify weak areas\n7. Ensure topics are relevant to their industry and goals\n8. Make topics engaging and practical for their daily life\n\nPERSONALIZATION FACTORS:\n- Current level: ${contextData.onboarding.currentLevel}\n- Native language: ${contextData.onboarding.nativeLanguage}\n- Industry: ${contextData.onboarding.industry}\n- Interests: ${contextData.onboarding.interests?.join(', ')}\n- Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}\n- Upcoming occasions: ${contextData.onboarding.upcomingOccasions?.join(', ')}\n- Improvement areas: ${contextData.onboarding.improvementAreas?.join(', ')}\n- Main goal: ${contextData.onboarding.mainGoal}\n\n${strictJsonWarning}`
+      content: `You are an expert English language curriculum designer.
+
+The user is Bangladeshi (or Asian). Ensure all topics, scenarios, and examples are culturally appropriate and relevant for users from Bangladesh or Asia.
+
+1. First, analyze the user's conversation history to estimate their English level, strengths, and weaknesses.
+2. Use both the onboarding data and your analysis to create a personalized 1-week course (7 days) for this learner.
+
+COURSE STRUCTURE:
+- Days 1-5: Speaking practice (5 min) + Quiz
+- Day 6: Quiz only
+- Day 7: Weekly speaking exam
+
+TOPIC REQUIREMENTS:
+- Each topic must follow this EXACT structure:
+{
+  "id": "unique-id",
+  "title": "Topic Title",
+  "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Topic+Title",
+  "prompt": "Detailed, scenario-based conversation prompt for the AI tutor",
+  "firstPrompt": "Thought-provoking question or challenge to start the conversation",
+  "isCustom": false,
+  "category": "Personalized Topics"
+}
+
+ACTIVITY FORMATS:
+For each topic, select an engaging format such as:
+- Debate (argue for/against a position)
+- Role-play (act out a scenario)
+- Interview (answer challenging questions)
+- Storytelling (share a personal or imagined story)
+- Problem-solving (find solutions to real-life challenges)
+- Simulation (negotiate, persuade, or handle a situation)
+- Advice column (give advice to someone facing a problem)
+- Persuasion (convince the AI or a character to change their mind)
+- Explaining a process (teach the AI how to do something)
+- Describing a scene (imagine and describe a detailed event)
+- Making a plan (plan an event, trip, or project)
+- Comparing and contrasting (discuss pros/cons of two things)
+- Improv scenario (respond to a surprising situation)
+- Giving a speech (deliver a short speech on a topic)
+- Describing feelings (share how you would feel/react)
+- Making predictions (predict future trends or outcomes)
+- Explaining a concept (explain a complex idea simply)
+- Solving a mystery (work with the AI to solve a puzzle)
+- Giving instructions (instruct the AI on a task)
+- Cultural exchange (share and discuss cultural traditions)
+- Reacting to news (respond to a news story)
+- Brainstorming (generate creative ideas)
+- Describing a dream (talk about your biggest dream)
+- Handling conflict (resolve a disagreement)
+- Giving feedback (provide constructive feedback)
+- Making apologies (practice apologizing)
+- Expressing gratitude (thank someone meaningfully)
+- Making requests (ask for help or permission)
+- Describing a favorite (talk about your favorite thing)
+- Future self letter (speak as your future self)
+...and more.
+Do NOT simply ask the user to discuss a topic. Make the activity interactive, creative, and thought-provoking. Use at least 3 different formats across the 7 topics.
+
+EXAMPLES:
+- Debate: "Argue for or against the use of AI in your industry."
+- Role-play: "Pretend you are at a job interview for your dream position. The AI will ask you questions."
+- Problem-solving: "You have a communication problem with a colleague. How would you resolve it?"
+- Storytelling: "Tell a story about a time you learned something new at work."
+- Simulation: "Negotiate a contract with a client from another country."
+
+GENERATION RULES:
+1. Create 7 unique topics (one for each day), progressing from basic to advanced.
+2. At least 2 topics must be directly relevant to the user's daily life or work.
+3. At least 2 topics must be based on the user's interests or hobbies.
+4. At least 1 topic must be fun, surprising, or unusual to spark curiosity.
+5. At least 1 topic must target a weakness identified from the conversation data (grammar, vocabulary, or fluency).
+6. Do NOT simply repeat the user's onboarding answers; combine and remix them to create engaging, real-world scenarios.
+7. Each 'prompt' should immerse the user in a realistic situation.
+8. Each 'firstPrompt' should be a creative, open-ended question or challenge.
+
+PERSONALIZATION FACTORS:
+- Current level: ${contextData.onboarding.currentLevel}
+- Native language: ${contextData.onboarding.nativeLanguage}
+- Industry: ${contextData.onboarding.industry}
+- Interests: ${contextData.onboarding.interests?.join(', ')}
+- Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}
+- Upcoming occasions: ${contextData.onboarding.upcomingOccasions?.join(', ')}
+- Improvement areas: ${contextData.onboarding.improvementAreas?.join(', ')}
+- Main goal: ${contextData.onboarding.mainGoal}
+
+${strictJsonWarning}`
     },
     {
       role: 'user',
