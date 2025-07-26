@@ -317,9 +317,11 @@ router.post('/courses/speaking/start', authenticateToken, async (req, res) => {
     }
 
     // Create a new speaking session (start_time only)
+    const startTime = new Date();
+    const sessionDate = startTime.toISOString().split('T')[0];
     await client.query(
-      `INSERT INTO speaking_sessions (user_id, course_id, date, start_time) VALUES ($1, $2, $3, NOW())`,
-      [userId, course.id, today]
+      `INSERT INTO speaking_sessions (user_id, course_id, date, start_time) VALUES ($1, $2, $3, $4)`,
+      [userId, course.id, sessionDate, startTime]
     );
 
     res.json({
@@ -362,8 +364,8 @@ router.post('/courses/speaking/end', authenticateToken, async (req, res) => {
 
     // Update session with end_time and duration
     await client.query(
-      `UPDATE speaking_sessions SET end_time = NOW(), duration_seconds = $1, updated_at = NOW() WHERE id = $2`,
-      [durationSeconds, session.id]
+      `UPDATE speaking_sessions SET end_time = $1, duration_seconds = $2, updated_at = $1 WHERE id = $3`,
+      [endTime, durationSeconds, session.id]
     );
 
     // Sum all durations for today
