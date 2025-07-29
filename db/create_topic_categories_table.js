@@ -1,11 +1,12 @@
 const { Pool } = require('pg');
+require('dotenv').config();
 
 const pool = new Pool({
-  host: 'dpg-d1giokqli9vc73an51vg-a.singapore-postgres.render.com',
-  port: 5432,
-  user: 'talktivity',
-  password: 'gYmROfudwrUt7HJwRiNgYchzlytxCx5q',
-  database: 'talktivity_postgres_sql',
+  host: process.env.PG_HOST || 'localhost',
+  port: parseInt(process.env.PG_PORT || '5433'),
+  user: process.env.PG_USER || 'postgres',
+  password: process.env.PG_PASSWORD || '1234',
+  database: process.env.PG_DATABASE || 'postgres',
   ssl: { rejectUnauthorized: false }
 });
 
