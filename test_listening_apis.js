@@ -3,7 +3,7 @@
 
 const fetch = require('node-fetch');
 
-const BASE_URL = 'http://localhost:8082/api';
+const BASE_URL = 'https://talktivity-node-server-smvz.onrender.com/api';
 const TEST_TOKEN = 'your-test-token-here'; // Replace with actual token
 
 async function testListeningAPIs() {
