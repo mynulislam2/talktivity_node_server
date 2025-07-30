@@ -13,7 +13,9 @@ const pool = new Pool({
     max: 20, // Maximum number of clients in the pool
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
     connectionTimeoutMillis: 2000, // How long to wait for a connection to become available
-
+    ssl:{
+        rejectUnauthorized: false // Disable SSL verification for development
+    }
 });
 
 // Handle pool errors globally
@@ -250,6 +252,13 @@ const initTables = async () => {
                 quiz_completed BOOLEAN DEFAULT false,
                 quiz_score INTEGER,
                 quiz_attempts INTEGER DEFAULT 0,
+                listening_completed BOOLEAN DEFAULT false,
+                listening_start_time TIMESTAMP,
+                listening_end_time TIMESTAMP,
+                listening_duration_seconds INTEGER DEFAULT 0,
+                listening_quiz_completed BOOLEAN DEFAULT false,
+                listening_quiz_score INTEGER,
+                listening_quiz_attempts INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

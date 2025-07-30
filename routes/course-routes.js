@@ -255,6 +255,39 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
       }
     }
 
+    // Get today's listening topic (for now, use a default from constants)
+    let todayListeningTopic = null;
+    // For demo purposes, we'll use a simple mapping
+    // In production, this would come from the course's listening topics
+    const listeningTopics = [
+      {
+        id: 1,
+        title: "First Day at a New Job",
+        category: "Jobs and Workplace",
+        audio: "audios/1. First Day at a New Job.wav",
+        characters: [
+          { name: "Rafiq", role: "New Employee" },
+          { name: "Sarah", role: "Team Lead" }
+        ],
+        conversation: "Sarah: Hey Rafiq! Welcome to the team. How's your first day going so far?\nRafiq: Hi Sarah! Thanks for the warm welcome. It's going well, but I'm still trying to get the hang of everything. It's a lot to take in on the first day.\nSarah: Oh, I completely get that. My first day was a total whirlwind. Don't worry, no one expects you to have it all figured out right away. The main goal for this week is just for you to get settled in and meet everyone.\nRafiq: That's a relief to hear. I've met a few people from the marketing team, and everyone seems really friendly.\nSarah: They are a great bunch. This afternoon, I've blocked out some time to walk you through our project management software, Asana. That's the main tool we use to keep track of all our tasks and deadlines.\nRafiq: Perfect. I've used it a little bit in my previous role, so I'm somewhat familiar with it. What's the top priority for me to learn in my first week?\nSarah: Good question. I'd say focus on understanding our workflow. I'll show you the ropes, of course. We'll go over some of our past projects so you can see how we take an idea from the initial concept all the way to launch. It'll give you a good bird's-eye view of how we operate.\nRafiq: That sounds like a great way to get up to speed. Is there any documentation I should read?\nSarah: Yes, I've sent you an email with a link to our team's folder on the shared drive. You'll find brand guidelines, style guides, and some important onboarding documents in there. Just go through them whenever you have some downtime. Don't feel pressured to memorize everything at once.\nRafiq: Got it. Thanks for all the guidance, Sarah. I appreciate it. It makes starting a new job feel a lot less intimidating.\nSarah: Of course! We're all here to help you succeed. Feel free to reach out to me or anyone else on the team if you have questions. Seriously, there's no such thing as a stupid question, especially in your first few weeks. Now, how about we grab a coffee from the kitchen before we dive into Asana?\nRafiq: I would love that. Lead the way!"
+      },
+      {
+        id: 2,
+        title: "Discussing a Project Deadline",
+        category: "Jobs and Workplace",
+        audio: "audios/2. Discussing a Project Deadline.wav",
+        characters: [
+          { name: "Maria", role: "Project Manager" },
+          { name: "Ben", role: "Developer" }
+        ],
+        conversation: "Maria: Hi Ben, have you got a minute? I wanted to touch base about the quarterly report project.\nBen: Sure, Maria. Come on in. What's up?\nMaria: I was just looking at the project timeline, and I'm a little concerned we might not hit our deadline at the end of the month. It seems like the data integration phase is taking longer than we anticipated.\nBen: Yeah, you're not wrong about that. We ran into a few unexpected issues with the old database. It's a bit of a mess, to be honest. The system is much more outdated than we first thought, so we've had to work around a lot of its quirks.\nMaria: I see. I had a feeling that might be the case. So, what's your take on the situation? Realistically, how much more time do you think your team needs to get everything ironed out?\nBen: Well, we're making progress, but it's slow going. I think if we want to do it right and make sure the data is clean, we could probably use another week. I know that's not ideal.\nMaria: An extra week… hmm. That's going to be tight. The leadership team is really looking forward to seeing this report in the Q3 review meeting. Pushing it back would be a last resort.\nBen: I completely get that. Another option is that we could pull in some extra help. Maybe get Priya from the analytics team to lend a hand? She's a wizard with legacy systems. She could probably help us speed things up significantly.\nMaria: That's a great idea. I didn't even think of that. Do you think she'd be available to jump in?\nBen: I can definitely reach out to her. I think if we explain the situation, her manager will be on board. It's a high-priority project for everyone. We'll just have to make a strong case for it.\nMaria: Okay, let's do that. You talk to Priya and her manager, and I'll rearrange some of our other smaller tasks to free up more of your team's time for this. We need to go all in on this for the next couple of weeks.\nBen: Sounds like a plan. I'll let you know what Priya says by the end of the day. I'm feeling a bit more optimistic now. I think we can pull it off.\nMaria: Me too. Thanks for being upfront about the challenges, Ben. It's much better to deal with this now than to wait until the last minute. Let's stay on top of it.\nBen: Absolutely. We'll get it done."
+      }
+    ];
+
+    // Simple rotation of listening topics based on day
+    const topicIndex = (currentDay - 1) % listeningTopics.length;
+    todayListeningTopic = listeningTopics[topicIndex];
+
     res.json({
       success: true,
       data: {
@@ -265,14 +298,17 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
           dayType: dayType,
           totalWeeks: 12,
           totalDays: 84,
-          todayTopic: todayTopic
+          todayTopic: todayTopic,
+          todayListeningTopic: todayListeningTopic
         },
         today: {
           date: today,
           progress: todayProgress,
           timeRemaining: timeRemaining,
           speakingAvailable: speakingAvailable,
-          quizAvailable: isQuizAvailable(dayType, todayProgress)
+          quizAvailable: isQuizAvailable(dayType, todayProgress),
+          listeningAvailable: isListeningAvailable(dayType, todayProgress),
+          listeningQuizAvailable: isListeningQuizAvailable(dayType, todayProgress)
         }
       }
     });
@@ -528,6 +564,189 @@ router.post('/courses/quiz/complete', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to complete quiz'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Start listening session
+router.post('/courses/listening/start', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const userId = req.user.id;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get user's active course
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const course = courseResult.rows[0];
+
+    // Get or create today's progress
+    let progressResult = await client.query(
+      'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
+      [userId, today]
+    );
+
+    if (progressResult.rows.length === 0) {
+      // Create new progress record
+      const courseStart = new Date(course.course_start_date);
+      const daysSinceStart = Math.floor((new Date() - courseStart) / (1000 * 60 * 60 * 24));
+      const currentWeek = Math.floor(daysSinceStart / 7) + 1;
+      const currentDay = (daysSinceStart % 7) + 1;
+
+      await client.query(
+        `INSERT INTO daily_progress (user_id, course_id, week_number, day_number, date, listening_start_time)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [userId, course.id, currentWeek, currentDay, today]
+      );
+    } else {
+      // Update existing progress with start time
+      await client.query(
+        `UPDATE daily_progress 
+         SET listening_start_time = NOW()
+         WHERE user_id = $1 AND date = $2`,
+        [userId, today]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Listening session started',
+      data: {
+        started: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Error starting listening session:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to start listening session'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Complete listening
+router.post('/courses/listening/complete', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    
+    const userId = req.user.id;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get today's progress
+    const progressResult = await client.query(
+      'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
+      [userId, today]
+    );
+
+    if (progressResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No daily progress found'
+      });
+    }
+
+    const progress = progressResult.rows[0];
+
+    // Calculate listening duration if start time exists
+    let durationSeconds = 0;
+    if (progress.listening_start_time) {
+      const startTime = new Date(progress.listening_start_time);
+      const endTime = new Date();
+      durationSeconds = Math.floor((endTime - startTime) / 1000);
+    }
+
+    // Update listening completion
+    await client.query(
+      `UPDATE daily_progress 
+       SET listening_completed = true, listening_end_time = NOW(), listening_duration_seconds = $1
+       WHERE user_id = $2 AND date = $3`,
+      [durationSeconds, userId, today]
+    );
+
+    res.json({
+      success: true,
+      message: 'Listening completed',
+      data: {
+        completed: true,
+        durationSeconds: durationSeconds
+      }
+    });
+
+  } catch (error) {
+    console.error('Error completing listening:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete listening'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Complete listening quiz
+router.post('/courses/listening-quiz/complete', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    
+    const userId = req.user.id;
+    const { score } = req.body;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get today's progress
+    const progressResult = await client.query(
+      'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
+      [userId, today]
+    );
+
+    if (progressResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No daily progress found'
+      });
+    }
+
+    const progress = progressResult.rows[0];
+
+    // Update listening quiz completion
+    await client.query(
+      `UPDATE daily_progress 
+       SET listening_quiz_completed = true, listening_quiz_score = $1, listening_quiz_attempts = listening_quiz_attempts + 1
+       WHERE user_id = $2 AND date = $3`,
+      [score, userId, today]
+    );
+
+    res.json({
+      success: true,
+      message: 'Listening quiz completed',
+      data: {
+        score: score,
+        completed: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Error completing listening quiz:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete listening quiz'
     });
   } finally {
     if (client) client.release();
@@ -827,6 +1046,17 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
     `, [userId, monthInt, yearInt]);
     const sessions = sessionsResult.rows;
 
+    // Fetch all listening sessions for the month
+    const listeningSessionsResult = await client.query(`
+      SELECT * FROM daily_progress
+      WHERE user_id = $1
+        AND listening_completed = true
+        AND EXTRACT(MONTH FROM date) = $2
+        AND EXTRACT(YEAR FROM date) = $3
+      ORDER BY date DESC
+    `, [userId, monthInt, yearInt]);
+    const listeningSessions = listeningSessionsResult.rows;
+
     // Fetch all quiz results for the month
     const quizResults = await client.query(`
       SELECT * FROM daily_progress
@@ -837,6 +1067,17 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
       ORDER BY date DESC
     `, [userId, monthInt, yearInt]);
     const quizzes = quizResults.rows;
+
+    // Fetch all listening quiz results for the month
+    const listeningQuizResults = await client.query(`
+      SELECT * FROM daily_progress
+      WHERE user_id = $1
+        AND listening_quiz_completed = true
+        AND EXTRACT(MONTH FROM date) = $2
+        AND EXTRACT(YEAR FROM date) = $3
+      ORDER BY date DESC
+    `, [userId, monthInt, yearInt]);
+    const listeningQuizzes = listeningQuizResults.rows;
 
     // Fetch all exam results for the month
     const examResults = await client.query(`
@@ -945,7 +1186,9 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
         year: yearInt,
         conversations,
         sessions,
+        listeningSessions,
         quizzes,
+        listeningQuizzes,
         exams,
         aiAnalysis
       }
@@ -1448,18 +1691,27 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
         COUNT(*) as total_days,
         COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+        COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
+        COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
+        COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
         AVG(quiz_score) as avg_quiz_score,
+        AVG(listening_quiz_score) as avg_listening_quiz_score,
         
         -- Streak calculations
         MAX(CASE WHEN speaking_completed = true THEN date END) as last_speaking_date,
         MAX(CASE WHEN quiz_completed = true THEN date END) as last_quiz_date,
+        MAX(CASE WHEN listening_completed = true THEN date END) as last_listening_date,
+        MAX(CASE WHEN listening_quiz_completed = true THEN date END) as last_listening_quiz_date,
         
         -- Weekly averages
         AVG(CASE WHEN quiz_completed = true THEN quiz_score END) as weekly_avg_quiz,
+        AVG(CASE WHEN listening_quiz_completed = true THEN listening_quiz_score END) as weekly_avg_listening_quiz,
         
         -- Time spent
         SUM(speaking_duration_seconds) as total_speaking_time,
-        AVG(speaking_duration_seconds) as avg_speaking_time
+        AVG(speaking_duration_seconds) as avg_speaking_time,
+        SUM(listening_duration_seconds) as total_listening_time,
+        AVG(listening_duration_seconds) as avg_listening_time
         
       FROM daily_progress 
       WHERE user_id = $1 AND course_id = $2
@@ -1489,7 +1741,11 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
                ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
         FROM daily_progress
-        WHERE user_id = $1 AND course_id = $2 AND speaking_completed = true
+        WHERE user_id = $1 AND course_id = $2 
+          AND speaking_completed = true 
+          AND quiz_completed = true 
+          AND listening_completed = true 
+          AND listening_quiz_completed = true
       )
       SELECT COUNT(*) as current_streak
       FROM consecutive_days
@@ -1503,8 +1759,13 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
         EXTRACT(MONTH FROM date) as month,
         COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+        COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
+        COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
+        COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
         AVG(quiz_score) as avg_quiz_score,
-        SUM(speaking_duration_seconds) as total_speaking_time
+        AVG(listening_quiz_score) as avg_listening_quiz_score,
+        SUM(speaking_duration_seconds) as total_speaking_time,
+        SUM(listening_duration_seconds) as total_listening_time
       FROM daily_progress
       WHERE user_id = $1 AND course_id = $2 
         AND date >= CURRENT_DATE - INTERVAL '6 months'
@@ -1541,12 +1802,20 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
           total_days: parseInt(analyticsData.total_days) || 0,
           speaking_days: parseInt(analyticsData.speaking_days) || 0,
           quiz_days: parseInt(analyticsData.quiz_days) || 0,
+          listening_days: parseInt(analyticsData.listening_days) || 0,
+          listening_quiz_days: parseInt(analyticsData.listening_quiz_days) || 0,
+          complete_days: parseInt(analyticsData.complete_days) || 0,
           avg_quiz_score: parseFloat(analyticsData.avg_quiz_score) || 0,
+          avg_listening_quiz_score: parseFloat(analyticsData.avg_listening_quiz_score) || 0,
           current_streak: currentStreak,
           total_speaking_time: parseInt(analyticsData.total_speaking_time) || 0,
           avg_speaking_time: parseFloat(analyticsData.avg_speaking_time) || 0,
+          total_listening_time: parseInt(analyticsData.total_listening_time) || 0,
+          avg_listening_time: parseFloat(analyticsData.avg_listening_time) || 0,
           last_speaking_date: analyticsData.last_speaking_date,
-          last_quiz_date: analyticsData.last_quiz_date
+          last_quiz_date: analyticsData.last_quiz_date,
+          last_listening_date: analyticsData.last_listening_date,
+          last_listening_quiz_date: analyticsData.last_listening_quiz_date
         },
         weeklyExams: weeklyExams.rows,
         speakingSessions: speakingSessions.rows,
@@ -1834,14 +2103,15 @@ router.get('/courses/weekly-progress', authenticateToken, async (req, res) => {
 
 // Helper functions
 function getDayType(dayNumber) {
+  // For the first 5 days, all activities (speaking, quiz, listening, listening quiz) are available
   if (dayNumber >= 1 && dayNumber <= 5) {
-    return 'speaking_quiz';
+    return 'all_activities';
   } else if (dayNumber === 6) {
     return 'quiz_only';
   } else if (dayNumber === 7) {
     return 'speaking_exam';
   }
-  return 'unknown';
+  return 'all_activities'; // Default fallback
 }
 
 function calculateTimeRemaining(progress) {
@@ -1890,6 +2160,10 @@ function isQuizAvailable(dayType, progress) {
     if (dayType === 'quiz_only') {
       return true;
     }
+    // On all_activities days, quiz is only available after speaking is completed
+    if (dayType === 'all_activities') {
+      return false; // Need to complete speaking first
+    }
     // On speaking_quiz days, quiz is only available after speaking is completed
     return false;
   }
@@ -1904,8 +2178,98 @@ function isQuizAvailable(dayType, progress) {
     return true;
   }
   
+  // For all_activities days, quiz is only available after speaking is completed
+  if (dayType === 'all_activities') {
+    return progress.speaking_completed;
+  }
+  
   // For speaking_quiz days, quiz is only available after speaking is completed
   return progress.speaking_completed;
+}
+
+function isListeningAvailable(dayType, progress) {
+  // Listening is available on all_activities, listening_quiz, and speaking_listening_quiz days
+  if (dayType !== 'all_activities' && dayType !== 'listening_quiz' && dayType !== 'speaking_listening_quiz') {
+    return false;
+  }
+  
+  // If no progress exists
+  if (!progress) {
+    // On all_activities days, listening is only available after quiz is completed
+    if (dayType === 'all_activities') {
+      return false; // Need to complete quiz first
+    }
+    // On listening_quiz days, listening is available
+    if (dayType === 'listening_quiz') {
+      return true;
+    }
+    // On speaking_listening_quiz days, listening is only available after speaking is completed
+    if (dayType === 'speaking_listening_quiz') {
+      return false; // Need to complete speaking first
+    }
+    return false;
+  }
+  
+  // If listening is already completed, it's not available
+  if (progress.listening_completed) {
+    return false;
+  }
+  
+  // For all_activities days, listening is only available after quiz is completed
+  if (dayType === 'all_activities') {
+    return progress.quiz_completed;
+  }
+  
+  // For speaking_listening_quiz days, listening is only available after speaking is completed
+  if (dayType === 'speaking_listening_quiz') {
+    return progress.speaking_completed;
+  }
+  
+  // For listening_quiz days, listening is available
+  return true;
+}
+
+function isListeningQuizAvailable(dayType, progress) {
+  // Listening quiz is available on all_activities, listening_quiz, and speaking_listening_quiz days
+  if (dayType !== 'all_activities' && dayType !== 'listening_quiz' && dayType !== 'speaking_listening_quiz') {
+    return false;
+  }
+  
+  // If no progress exists
+  if (!progress) {
+    // On all_activities days, listening quiz is only available after listening is completed
+    if (dayType === 'all_activities') {
+      return false; // Need to complete listening first
+    }
+    // On listening_quiz days, listening quiz is only available after listening is completed
+    if (dayType === 'listening_quiz') {
+      return false; // Need to complete listening first
+    }
+    // On speaking_listening_quiz days, need both speaking and listening completed
+    return false;
+  }
+  
+  // If listening quiz is already completed, it's not available
+  if (progress.listening_quiz_completed) {
+    return false;
+  }
+  
+  // For all_activities days, listening quiz is only available after listening is completed
+  if (dayType === 'all_activities') {
+    return progress.listening_completed;
+  }
+  
+  // For listening_quiz days, listening quiz is only available after listening is completed
+  if (dayType === 'listening_quiz') {
+    return progress.listening_completed;
+  }
+  
+  // For speaking_listening_quiz days, listening quiz is only available after both speaking and listening are completed
+  if (dayType === 'speaking_listening_quiz') {
+    return progress.speaking_completed && progress.listening_completed;
+  }
+  
+  return false;
 }
 
 module.exports = router; 
