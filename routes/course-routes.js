@@ -517,6 +517,258 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
   }
 });
 
+// Device-based speaking session endpoints (for unauthenticated users)
+// Start device speaking session
+router.post('/courses/device-speaking/start', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Check lifetime limit (5 minutes total for device)
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+    
+    if (lifetimeSeconds >= 5 * 60) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Lifetime speaking limit reached for this device',
+        data: { lifetimeLimitReached: true }
+      });
+    }
+
+    // Check daily limit (5 minutes per day)
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+    
+    if (dailySeconds >= 5 * 60) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Daily speaking limit reached for this device',
+        data: { dailyLimitReached: true }
+      });
+    }
+
+    // Create a new device speaking session
+    const startTime = new Date();
+    const sessionDate = startTime.toISOString().split('T')[0];
+    await client.query(
+      `INSERT INTO device_speaking_sessions (device_id, date, start_time) VALUES ($1, $2, $3)`,
+      [deviceId, sessionDate, startTime]
+    );
+
+    res.json({
+      success: true,
+      message: 'Device speaking session started',
+      data: {
+        startTime: new Date(),
+        dailyTimeRemaining: 5 * 60 - dailySeconds,
+        lifetimeTimeRemaining: 5 * 60 - lifetimeSeconds
+      }
+    });
+  } catch (error) {
+    console.error('Error starting device speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to start device speaking session' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// End device speaking session
+router.post('/courses/device-speaking/end', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find the latest device speaking session for today that has no end_time
+    const sessionResult = await client.query(
+      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [deviceId, today]
+    );
+    
+    if (sessionResult.rows.length === 0) {
+      return res.status(400).json({ success: false, error: 'No active device speaking session found' });
+    }
+    
+    const session = sessionResult.rows[0];
+    const endTime = new Date();
+    const startTime = new Date(session.start_time);
+    let durationSeconds = Math.floor((endTime - startTime) / 1000);
+    if (durationSeconds < 0) durationSeconds = 0;
+
+    // Update session with end_time and duration
+    await client.query(
+      `UPDATE device_speaking_sessions SET end_time = $1, duration_seconds = $2, updated_at = $1 WHERE id = $3`,
+      [endTime, durationSeconds, session.id]
+    );
+
+    // Calculate totals
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+
+    res.json({
+      success: true,
+      message: 'Device speaking session ended',
+      data: {
+        duration: durationSeconds,
+        dailyTotal: dailySeconds,
+        lifetimeTotal: lifetimeSeconds,
+        dailyCompleted: dailySeconds >= 5 * 60,
+        lifetimeCompleted: lifetimeSeconds >= 5 * 60
+      }
+    });
+  } catch (error) {
+    console.error('Error ending device speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to end device speaking session' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Check device speaking time limit
+router.post('/courses/device-speaking/check-time', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get current session
+    const sessionResult = await client.query(
+      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [deviceId, today]
+    );
+
+    if (sessionResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          timeRemaining: 5 * 60,
+          shouldAutoComplete: false
+        }
+      });
+    }
+
+    const session = sessionResult.rows[0];
+    const startTime = new Date(session.start_time);
+    const now = new Date();
+    const elapsed = Math.floor((now - startTime) / 1000);
+    const timeRemaining = Math.max(0, (5 * 60) - elapsed);
+    const shouldAutoComplete = timeRemaining <= 0;
+
+    // Auto-complete if time is up
+    if (shouldAutoComplete) {
+      await client.query(
+        `UPDATE device_speaking_sessions 
+         SET end_time = NOW(), duration_seconds = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [5 * 60, session.id]
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        timeRemaining: timeRemaining,
+        shouldAutoComplete: shouldAutoComplete,
+        autoCompleted: shouldAutoComplete
+      }
+    });
+
+  } catch (error) {
+    console.error('Error checking device speaking time:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check device speaking time'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Get device speaking status
+router.post('/courses/device-speaking/status', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get daily total
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+
+    // Get lifetime total
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+
+    res.json({
+      success: true,
+      data: {
+        dailyTotal: dailySeconds,
+        lifetimeTotal: lifetimeSeconds,
+        dailyAvailable: dailySeconds < 5 * 60,
+        lifetimeAvailable: lifetimeSeconds < 5 * 60,
+        dailyRemaining: Math.max(0, 5 * 60 - dailySeconds),
+        lifetimeRemaining: Math.max(0, 5 * 60 - lifetimeSeconds)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting device speaking status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get device speaking status'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 // Complete quiz
 router.post('/courses/quiz/complete', authenticateToken, async (req, res) => {
   let client;
