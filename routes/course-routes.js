@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const listeningTopics = require('../listening-topics');
 
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
@@ -255,36 +256,9 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
       }
     }
 
-    // Get today's listening topic (for now, use a default from constants)
+    // Get today's listening topic from the imported listening topics
     let todayListeningTopic = null;
-    // For demo purposes, we'll use a simple mapping
-    // In production, this would come from the course's listening topics
-    const listeningTopics = [
-      {
-        id: 1,
-        title: "First Day at a New Job",
-        category: "Jobs and Workplace",
-        audio: "audios/1. First Day at a New Job.wav",
-        characters: [
-          { name: "Rafiq", role: "New Employee" },
-          { name: "Sarah", role: "Team Lead" }
-        ],
-        conversation: "Sarah: Hey Rafiq! Welcome to the team. How's your first day going so far?\nRafiq: Hi Sarah! Thanks for the warm welcome. It's going well, but I'm still trying to get the hang of everything. It's a lot to take in on the first day.\nSarah: Oh, I completely get that. My first day was a total whirlwind. Don't worry, no one expects you to have it all figured out right away. The main goal for this week is just for you to get settled in and meet everyone.\nRafiq: That's a relief to hear. I've met a few people from the marketing team, and everyone seems really friendly.\nSarah: They are a great bunch. This afternoon, I've blocked out some time to walk you through our project management software, Asana. That's the main tool we use to keep track of all our tasks and deadlines.\nRafiq: Perfect. I've used it a little bit in my previous role, so I'm somewhat familiar with it. What's the top priority for me to learn in my first week?\nSarah: Good question. I'd say focus on understanding our workflow. I'll show you the ropes, of course. We'll go over some of our past projects so you can see how we take an idea from the initial concept all the way to launch. It'll give you a good bird's-eye view of how we operate.\nRafiq: That sounds like a great way to get up to speed. Is there any documentation I should read?\nSarah: Yes, I've sent you an email with a link to our team's folder on the shared drive. You'll find brand guidelines, style guides, and some important onboarding documents in there. Just go through them whenever you have some downtime. Don't feel pressured to memorize everything at once.\nRafiq: Got it. Thanks for all the guidance, Sarah. I appreciate it. It makes starting a new job feel a lot less intimidating.\nSarah: Of course! We're all here to help you succeed. Feel free to reach out to me or anyone else on the team if you have questions. Seriously, there's no such thing as a stupid question, especially in your first few weeks. Now, how about we grab a coffee from the kitchen before we dive into Asana?\nRafiq: I would love that. Lead the way!"
-      },
-      {
-        id: 2,
-        title: "Discussing a Project Deadline",
-        category: "Jobs and Workplace",
-        audio: "audios/2. Discussing a Project Deadline.wav",
-        characters: [
-          { name: "Maria", role: "Project Manager" },
-          { name: "Ben", role: "Developer" }
-        ],
-        conversation: "Maria: Hi Ben, have you got a minute? I wanted to touch base about the quarterly report project.\nBen: Sure, Maria. Come on in. What's up?\nMaria: I was just looking at the project timeline, and I'm a little concerned we might not hit our deadline at the end of the month. It seems like the data integration phase is taking longer than we anticipated.\nBen: Yeah, you're not wrong about that. We ran into a few unexpected issues with the old database. It's a bit of a mess, to be honest. The system is much more outdated than we first thought, so we've had to work around a lot of its quirks.\nMaria: I see. I had a feeling that might be the case. So, what's your take on the situation? Realistically, how much more time do you think your team needs to get everything ironed out?\nBen: Well, we're making progress, but it's slow going. I think if we want to do it right and make sure the data is clean, we could probably use another week. I know that's not ideal.\nMaria: An extra week… hmm. That's going to be tight. The leadership team is really looking forward to seeing this report in the Q3 review meeting. Pushing it back would be a last resort.\nBen: I completely get that. Another option is that we could pull in some extra help. Maybe get Priya from the analytics team to lend a hand? She's a wizard with legacy systems. She could probably help us speed things up significantly.\nMaria: That's a great idea. I didn't even think of that. Do you think she'd be available to jump in?\nBen: I can definitely reach out to her. I think if we explain the situation, her manager will be on board. It's a high-priority project for everyone. We'll just have to make a strong case for it.\nMaria: Okay, let's do that. You talk to Priya and her manager, and I'll rearrange some of our other smaller tasks to free up more of your team's time for this. We need to go all in on this for the next couple of weeks.\nBen: Sounds like a plan. I'll let you know what Priya says by the end of the day. I'm feeling a bit more optimistic now. I think we can pull it off.\nMaria: Me too. Thanks for being upfront about the challenges, Ben. It's much better to deal with this now than to wait until the last minute. Let's stay on top of it.\nBen: Absolutely. We'll get it done."
-      }
-    ];
-
-    // Simple rotation of listening topics based on day
+    // Use the imported listening topics array for better variety
     const topicIndex = (currentDay - 1) % listeningTopics.length;
     todayListeningTopic = listeningTopics[topicIndex];
 
@@ -511,6 +485,258 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
     res.status(500).json({
       success: false,
       error: 'Failed to check speaking time'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Device-based speaking session endpoints (for unauthenticated users)
+// Start device speaking session
+router.post('/courses/device-speaking/start', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Check lifetime limit (5 minutes total for device)
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+    
+    if (lifetimeSeconds >= 5 * 60) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Lifetime speaking limit reached for this device',
+        data: { lifetimeLimitReached: true }
+      });
+    }
+
+    // Check daily limit (5 minutes per day)
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+    
+    if (dailySeconds >= 5 * 60) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Daily speaking limit reached for this device',
+        data: { dailyLimitReached: true }
+      });
+    }
+
+    // Create a new device speaking session
+    const startTime = new Date();
+    const sessionDate = startTime.toISOString().split('T')[0];
+    await client.query(
+      `INSERT INTO device_speaking_sessions (device_id, date, start_time) VALUES ($1, $2, $3)`,
+      [deviceId, sessionDate, startTime]
+    );
+
+    res.json({
+      success: true,
+      message: 'Device speaking session started',
+      data: {
+        startTime: new Date(),
+        dailyTimeRemaining: 5 * 60 - dailySeconds,
+        lifetimeTimeRemaining: 5 * 60 - lifetimeSeconds
+      }
+    });
+  } catch (error) {
+    console.error('Error starting device speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to start device speaking session' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// End device speaking session
+router.post('/courses/device-speaking/end', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find the latest device speaking session for today that has no end_time
+    const sessionResult = await client.query(
+      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [deviceId, today]
+    );
+    
+    if (sessionResult.rows.length === 0) {
+      return res.status(400).json({ success: false, error: 'No active device speaking session found' });
+    }
+    
+    const session = sessionResult.rows[0];
+    const endTime = new Date();
+    const startTime = new Date(session.start_time);
+    let durationSeconds = Math.floor((endTime - startTime) / 1000);
+    if (durationSeconds < 0) durationSeconds = 0;
+
+    // Update session with end_time and duration
+    await client.query(
+      `UPDATE device_speaking_sessions SET end_time = $1, duration_seconds = $2, updated_at = $1 WHERE id = $3`,
+      [endTime, durationSeconds, session.id]
+    );
+
+    // Calculate totals
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+
+    res.json({
+      success: true,
+      message: 'Device speaking session ended',
+      data: {
+        duration: durationSeconds,
+        dailyTotal: dailySeconds,
+        lifetimeTotal: lifetimeSeconds,
+        dailyCompleted: dailySeconds >= 5 * 60,
+        lifetimeCompleted: lifetimeSeconds >= 5 * 60
+      }
+    });
+  } catch (error) {
+    console.error('Error ending device speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to end device speaking session' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Check device speaking time limit
+router.post('/courses/device-speaking/check-time', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get current session
+    const sessionResult = await client.query(
+      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [deviceId, today]
+    );
+
+    if (sessionResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          timeRemaining: 5 * 60,
+          shouldAutoComplete: false
+        }
+      });
+    }
+
+    const session = sessionResult.rows[0];
+    const startTime = new Date(session.start_time);
+    const now = new Date();
+    const elapsed = Math.floor((now - startTime) / 1000);
+    const timeRemaining = Math.max(0, (5 * 60) - elapsed);
+    const shouldAutoComplete = timeRemaining <= 0;
+
+    // Auto-complete if time is up
+    if (shouldAutoComplete) {
+      await client.query(
+        `UPDATE device_speaking_sessions 
+         SET end_time = NOW(), duration_seconds = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [5 * 60, session.id]
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        timeRemaining: timeRemaining,
+        shouldAutoComplete: shouldAutoComplete,
+        autoCompleted: shouldAutoComplete
+      }
+    });
+
+  } catch (error) {
+    console.error('Error checking device speaking time:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check device speaking time'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Get device speaking status
+router.post('/courses/device-speaking/status', async (req, res) => {
+  let client;
+  try {
+    client = await db.pool.connect();
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: 'Device ID required' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get daily total
+    const dailyResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
+      [deviceId, today]
+    );
+    const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
+
+    // Get lifetime total
+    const lifetimeResult = await client.query(
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
+      [deviceId]
+    );
+    const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
+
+    res.json({
+      success: true,
+      data: {
+        dailyTotal: dailySeconds,
+        lifetimeTotal: lifetimeSeconds,
+        dailyAvailable: dailySeconds < 5 * 60,
+        lifetimeAvailable: lifetimeSeconds < 5 * 60,
+        dailyRemaining: Math.max(0, 5 * 60 - dailySeconds),
+        lifetimeRemaining: Math.max(0, 5 * 60 - lifetimeSeconds)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting device speaking status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get device speaking status'
     });
   } finally {
     if (client) client.release();
@@ -1362,11 +1588,23 @@ TOPIC REQUIREMENTS:
   "id": "unique-id",
   "title": "Topic Title",
   "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Topic+Title",
-  "prompt": "Detailed, scenario-based conversation prompt for the AI tutor",
-  "firstPrompt": "Thought-provoking question or challenge to start the conversation",
+  "prompt": "Detailed, scenario-based conversation prompt for the AI tutor. But naturally encourage the user to speak more, rather than letting you do most of the talking ",
+  "firstPrompt": "Tell the user what today's topic is with greetings, and then ask a question relevant to the topic.",
   "isCustom": false,
   "category": "Personalized Topics"
 }
+
+here is the example of the topic structure:
+{
+  "id": "travel-experience-001",
+  "title": "A Memorable Travel Experience",
+  "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Travel+Experience",
+  "prompt": "You're a friendly and curious English-speaking AI tutor. In this session, help the user practice speaking about a memorable travel experience. Ask follow-up questions about where they went, who they went with, what they saw or did, and how they felt. Correct their grammar gently and encourage descriptive, fluent storytelling.",
+  "firstPrompt": "Start the conversation by saying exactly this and nothing else:  'Hi! our Today’s topic is: A Memorable Travel Experience. Can you tell me about a trip you’ve taken that you’ll never forget?'",
+  "isCustom": false,
+  "category": "Personalized Topics"
+}
+
 
 ACTIVITY FORMATS:
 For each topic, select an engaging format such as:

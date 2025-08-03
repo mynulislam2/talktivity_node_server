@@ -13,9 +13,9 @@ const pool = new Pool({
     max: 20, // Maximum number of clients in the pool
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
     connectionTimeoutMillis: 2000, // How long to wait for a connection to become available
-    // ssl:{
-    //     rejectUnauthorized: false // Disable SSL verification for development
-    // }
+    ssl:{
+        rejectUnauthorized: false // Disable SSL verification for development
+    }
 });
 
 // Handle pool errors globally
@@ -430,6 +430,71 @@ const migrateUsersTable = async () => {
   }
 };
 
+// Daily Reports Functions
+const getDailyReport = async (userId, reportDate) => {
+  let client;
+  try {
+    client = await pool.connect();
+    
+    const result = await client.query(`
+      SELECT report_data, created_at, updated_at
+      FROM daily_reports 
+      WHERE user_id = $1 AND report_date = $2
+    `, [userId, reportDate]);
+    
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('❌ Error getting daily report:', error.message);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+};
+
+const saveDailyReport = async (userId, reportDate, reportData) => {
+  let client;
+  try {
+    client = await pool.connect();
+    
+    const result = await client.query(`
+      INSERT INTO daily_reports (user_id, report_date, report_data)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (user_id, report_date) 
+      DO UPDATE SET 
+        report_data = $3,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id, created_at, updated_at
+    `, [userId, reportDate, reportData]);
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error('❌ Error saving daily report:', error.message);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+};
+
+const deleteDailyReport = async (userId, reportDate) => {
+  let client;
+  try {
+    client = await pool.connect();
+    
+    const result = await client.query(`
+      DELETE FROM daily_reports 
+      WHERE user_id = $1 AND report_date = $2
+      RETURNING id
+    `, [userId, reportDate]);
+    
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('❌ Error deleting daily report:', error.message);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+};
+
 
 // Setup periodic cleanup of expired sessions (run every hour)
 const startPeriodicCleanup = () => {
@@ -448,6 +513,9 @@ module.exports = {
     cleanupExpiredSessions,
     getDatabaseStats,
     migrateUsersTable,
+    getDailyReport,
+    saveDailyReport,
+    deleteDailyReport,
     startPeriodicCleanup,
     gracefulShutdown
 };

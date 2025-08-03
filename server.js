@@ -8,6 +8,7 @@ const onboardingRoutes = require('./routes/onboarding-routes');
 const googleRoutes = require('./routes/google_auth');
 const topicRoutes = require('./routes/topic-routes');
 const courseRoutes = require('./routes/course-routes');
+const dailyReportsRoutes = require('./routes/daily-reports');
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -62,6 +63,7 @@ app.use('/api', transcriptRoutes);
 app.use('/api', onboardingRoutes);
 app.use('/api', topicRoutes);
 app.use('/api', courseRoutes);
+app.use('/api/daily-reports', dailyReportsRoutes);
 app.use('/api/groups', groupChatRoutes);
 app.use('/api/dms', dmRoutes);
 
