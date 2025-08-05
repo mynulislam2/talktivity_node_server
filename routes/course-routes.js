@@ -1779,6 +1779,8 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
     const timeline = [];
     const personalizedTopics = course.personalized_topics || [];
 
+    console.log(`Building timeline for course ${course.id}, start date: ${courseStart}, current week: ${currentWeek}, current day: ${currentDay}`);
+
     for (let week = 1; week <= 12; week++) {
       for (let day = 1; day <= 7; day++) {
         const dayIndex = (week - 1) * 7 + (day - 1);
@@ -1792,6 +1794,7 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
         
         const isCompleted = progress && (
           (dayType === 'speaking_quiz' && progress.speaking_completed && progress.quiz_completed) ||
+          (dayType === 'all_activities' && progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed) ||
           (dayType === 'quiz_only' && progress.quiz_completed) ||
           (dayType === 'speaking_exam' && progress.speaking_completed)
         );
@@ -2398,9 +2401,9 @@ function isQuizAvailable(dayType, progress) {
     if (dayType === 'quiz_only') {
       return true;
     }
-    // On all_activities days, quiz is only available after speaking is completed
+    // On all_activities days, quiz is only available after speaking, listening, and listening quiz are completed
     if (dayType === 'all_activities') {
-      return false; // Need to complete speaking first
+      return false; // Need to complete speaking, listening, and listening quiz first
     }
     // On speaking_quiz days, quiz is only available after speaking is completed
     return false;
@@ -2416,9 +2419,9 @@ function isQuizAvailable(dayType, progress) {
     return true;
   }
   
-  // For all_activities days, quiz is only available after speaking is completed
+  // For all_activities days, quiz is only available after speaking, listening, and listening quiz are completed
   if (dayType === 'all_activities') {
-    return progress.speaking_completed;
+    return progress.speaking_completed && progress.listening_completed && progress.listening_quiz_completed;
   }
   
   // For speaking_quiz days, quiz is only available after speaking is completed
@@ -2433,9 +2436,9 @@ function isListeningAvailable(dayType, progress) {
   
   // If no progress exists
   if (!progress) {
-    // On all_activities days, listening is only available after quiz is completed
+    // On all_activities days, listening is only available after speaking is completed
     if (dayType === 'all_activities') {
-      return false; // Need to complete quiz first
+      return false; // Need to complete speaking first
     }
     // On listening_quiz days, listening is available
     if (dayType === 'listening_quiz') {
@@ -2453,9 +2456,9 @@ function isListeningAvailable(dayType, progress) {
     return false;
   }
   
-  // For all_activities days, listening is only available after quiz is completed
+  // For all_activities days, listening is only available after speaking is completed
   if (dayType === 'all_activities') {
-    return progress.quiz_completed;
+    return progress.speaking_completed;
   }
   
   // For speaking_listening_quiz days, listening is only available after speaking is completed
