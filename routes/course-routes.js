@@ -272,6 +272,12 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
           dayType: dayType,
           totalWeeks: 12,
           totalDays: 84,
+          batchNumber: course.batch_number || 1,
+          batchStatus: course.batch_status ? {
+            action: course.batch_status.action,
+            message: course.batch_status.message,
+            batchNumber: course.batch_status.batch_number
+          } : undefined,
           todayTopic: todayTopic,
           todayListeningTopic: todayListeningTopic
         },
@@ -384,6 +390,7 @@ router.post('/courses/speaking/end', authenticateToken, async (req, res) => {
       [userId, today]
     );
     const totalSeconds = parseInt(sumResult.rows[0].total_seconds, 10);
+    
     // If total >= 5 min, mark daily_progress.speaking_completed = true
     if (totalSeconds >= 5 * 60) {
       // Get user's active course
@@ -391,13 +398,27 @@ router.post('/courses/speaking/end', authenticateToken, async (req, res) => {
         'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
         [userId]
       );
+      
+      if (courseResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'No active course found' });
+      }
+      
       const course = courseResult.rows[0];
-      // Upsert daily_progress
+      
+      // Upsert daily_progress with proper week/day calculation
+      const courseStart = new Date(course.course_start_date);
+      const daysSinceStart = Math.floor((new Date() - courseStart) / (1000 * 60 * 60 * 24));
+      const currentWeek = Math.floor(daysSinceStart / 7) + 1;
+      const currentDay = (daysSinceStart % 7) + 1;
+      
       await client.query(
-        `INSERT INTO daily_progress (user_id, course_id, week_number, day_number, date, speaking_completed)
-         VALUES ($1, $2, $3, $4, $5, true)
-         ON CONFLICT (user_id, date) DO UPDATE SET speaking_completed = true, speaking_end_time = NOW()`,
-        [userId, course.id, course.current_week, course.current_day, today]
+        `INSERT INTO daily_progress (user_id, course_id, week_number, day_number, date, speaking_completed, speaking_duration_seconds)
+         VALUES ($1, $2, $3, $4, $5, true, $6)
+         ON CONFLICT (user_id, date) DO UPDATE SET 
+           speaking_completed = true, 
+           speaking_end_time = NOW(),
+           speaking_duration_seconds = $6`,
+        [userId, course.id, currentWeek, currentDay, today, totalSeconds]
       );
     }
     res.json({
@@ -417,7 +438,7 @@ router.post('/courses/speaking/end', authenticateToken, async (req, res) => {
   }
 });
 
-// Check speaking time limit and auto-complete if needed
+    // Check speaking time limit and auto-complete if needed
 router.post('/courses/speaking/check-time', authenticateToken, async (req, res) => {
   let client;
   try {
@@ -444,7 +465,7 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
 
     const progress = progressResult.rows[0];
     
-    if (!progress.speaking_start_time || progress.speaking_completed) {
+    if (progress.speaking_completed) {
       return res.json({
         success: true,
         data: {
@@ -454,8 +475,24 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
       });
     }
 
-    // Calculate time remaining
-    const startTime = new Date(progress.speaking_start_time);
+    // Find the latest active speaking session for today
+    const sessionResult = await client.query(
+      'SELECT start_time FROM speaking_sessions WHERE user_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [userId, today]
+    );
+
+    if (sessionResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          timeRemaining: 5 * 60,
+          shouldAutoComplete: false
+        }
+      });
+    }
+
+    // Calculate time remaining based on actual session start time
+    const startTime = new Date(sessionResult.rows[0].start_time);
     const now = new Date();
     const elapsed = Math.floor((now - startTime) / 1000);
     const timeRemaining = Math.max(0, (5 * 60) - elapsed);
@@ -463,6 +500,15 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
 
     // Auto-complete if time is up
     if (shouldAutoComplete && !progress.speaking_completed) {
+      // End the current session
+      await client.query(
+        `UPDATE speaking_sessions 
+         SET end_time = NOW(), duration_seconds = $1, updated_at = NOW()
+         WHERE user_id = $2 AND date = $3 AND end_time IS NULL`,
+        [5 * 60, userId, today]
+      );
+
+      // Mark speaking as completed in daily_progress
       await client.query(
         `UPDATE daily_progress 
          SET speaking_completed = true, speaking_end_time = NOW(), speaking_duration_seconds = $1
@@ -1074,7 +1120,11 @@ router.get('/courses/progress', authenticateToken, async (req, res) => {
          COUNT(*) as total_days,
          COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
          COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
-         AVG(quiz_score) as avg_quiz_score
+         COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
+         COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
+         COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
+         AVG(quiz_score) as avg_quiz_score,
+         AVG(listening_quiz_score) as avg_listening_quiz_score
        FROM daily_progress 
        WHERE user_id = $1 AND course_id = $2`,
       [userId, course.id]
@@ -1779,8 +1829,6 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
     const timeline = [];
     const personalizedTopics = course.personalized_topics || [];
 
-    console.log(`Building timeline for course ${course.id}, start date: ${courseStart}, current week: ${currentWeek}, current day: ${currentDay}`);
-
     for (let week = 1; week <= 12; week++) {
       for (let day = 1; day <= 7; day++) {
         const dayIndex = (week - 1) * 7 + (day - 1);
@@ -1793,7 +1841,6 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
         const progress = progressMap[dateStr] || null;
         
         const isCompleted = progress && (
-          (dayType === 'speaking_quiz' && progress.speaking_completed && progress.quiz_completed) ||
           (dayType === 'all_activities' && progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed) ||
           (dayType === 'quiz_only' && progress.quiz_completed) ||
           (dayType === 'speaking_exam' && progress.speaking_completed)
@@ -2356,6 +2403,8 @@ function getDayType(dayNumber) {
 }
 
 function calculateTimeRemaining(progress) {
+  // This function is deprecated - use actual speaking session start time instead
+  // Keeping for backward compatibility but it should not be used for active sessions
   if (!progress || !progress.speaking_start_time) {
     return 5 * 60; // 5 minutes in seconds
   }
@@ -2384,9 +2433,10 @@ function isSpeakingAvailable(dayType, progress) {
     return false;
   }
   
-  // Check if 5 minutes have elapsed
-  const timeRemaining = calculateTimeRemaining(progress);
-  return timeRemaining > 0;
+  // Note: For active sessions, the actual time remaining should be calculated
+  // using the speaking_sessions table, not this progress-based calculation
+  // This function is used for availability checking, not active session timing
+  return true; // If not completed and day type allows, speaking is available
 }
 
 function isQuizAvailable(dayType, progress) {
@@ -2401,11 +2451,10 @@ function isQuizAvailable(dayType, progress) {
     if (dayType === 'quiz_only') {
       return true;
     }
-    // On all_activities days, quiz is only available after speaking, listening, and listening quiz are completed
+    // On all_activities days, quiz is only available after speaking is completed
     if (dayType === 'all_activities') {
-      return false; // Need to complete speaking, listening, and listening quiz first
+      return false; // Need to complete speaking first
     }
-    // On speaking_quiz days, quiz is only available after speaking is completed
     return false;
   }
   
@@ -2419,36 +2468,24 @@ function isQuizAvailable(dayType, progress) {
     return true;
   }
   
-  // For all_activities days, quiz is only available after speaking, listening, and listening quiz are completed
+  // For all_activities days, quiz is only available after speaking is completed
   if (dayType === 'all_activities') {
-    return progress.speaking_completed && progress.listening_completed && progress.listening_quiz_completed;
+    return progress.speaking_completed;
   }
   
-  // For speaking_quiz days, quiz is only available after speaking is completed
-  return progress.speaking_completed;
+  return false;
 }
 
 function isListeningAvailable(dayType, progress) {
-  // Listening is available on all_activities, listening_quiz, and speaking_listening_quiz days
-  if (dayType !== 'all_activities' && dayType !== 'listening_quiz' && dayType !== 'speaking_listening_quiz') {
+  // Listening is only available on all_activities days
+  if (dayType !== 'all_activities') {
     return false;
   }
   
   // If no progress exists
   if (!progress) {
-    // On all_activities days, listening is only available after speaking is completed
-    if (dayType === 'all_activities') {
-      return false; // Need to complete speaking first
-    }
-    // On listening_quiz days, listening is available
-    if (dayType === 'listening_quiz') {
-      return true;
-    }
-    // On speaking_listening_quiz days, listening is only available after speaking is completed
-    if (dayType === 'speaking_listening_quiz') {
-      return false; // Need to complete speaking first
-    }
-    return false;
+    // On all_activities days, listening is only available after quiz is completed
+    return false; // Need to complete quiz first
   }
   
   // If listening is already completed, it's not available
@@ -2456,38 +2493,20 @@ function isListeningAvailable(dayType, progress) {
     return false;
   }
   
-  // For all_activities days, listening is only available after speaking is completed
-  if (dayType === 'all_activities') {
-    return progress.speaking_completed;
-  }
-  
-  // For speaking_listening_quiz days, listening is only available after speaking is completed
-  if (dayType === 'speaking_listening_quiz') {
-    return progress.speaking_completed;
-  }
-  
-  // For listening_quiz days, listening is available
-  return true;
+  // For all_activities days, listening is only available after quiz is completed
+  return progress.quiz_completed;
 }
 
 function isListeningQuizAvailable(dayType, progress) {
-  // Listening quiz is available on all_activities, listening_quiz, and speaking_listening_quiz days
-  if (dayType !== 'all_activities' && dayType !== 'listening_quiz' && dayType !== 'speaking_listening_quiz') {
+  // Listening quiz is only available on all_activities days
+  if (dayType !== 'all_activities') {
     return false;
   }
   
   // If no progress exists
   if (!progress) {
     // On all_activities days, listening quiz is only available after listening is completed
-    if (dayType === 'all_activities') {
-      return false; // Need to complete listening first
-    }
-    // On listening_quiz days, listening quiz is only available after listening is completed
-    if (dayType === 'listening_quiz') {
-      return false; // Need to complete listening first
-    }
-    // On speaking_listening_quiz days, need both speaking and listening completed
-    return false;
+    return false; // Need to complete listening first
   }
   
   // If listening quiz is already completed, it's not available
@@ -2496,21 +2515,7 @@ function isListeningQuizAvailable(dayType, progress) {
   }
   
   // For all_activities days, listening quiz is only available after listening is completed
-  if (dayType === 'all_activities') {
-    return progress.listening_completed;
-  }
-  
-  // For listening_quiz days, listening quiz is only available after listening is completed
-  if (dayType === 'listening_quiz') {
-    return progress.listening_completed;
-  }
-  
-  // For speaking_listening_quiz days, listening quiz is only available after both speaking and listening are completed
-  if (dayType === 'speaking_listening_quiz') {
-    return progress.speaking_completed && progress.listening_completed;
-  }
-  
-  return false;
+  return progress.listening_completed;
 }
 
 module.exports = router; 
