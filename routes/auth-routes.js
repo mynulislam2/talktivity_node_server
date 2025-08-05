@@ -25,11 +25,7 @@ function authenticateToken(req, res, next) {
       });
     }
     
-    // Map userId to id for consistency with course-routes.js
-    req.user = {
-      id: user.userId,
-      email: user.email
-    };
+    req.user = user;
     next();
   });
 }
@@ -252,7 +248,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
     
     const result = await client.query(
       'SELECT id, email, full_name, created_at FROM users WHERE id = $1',
-      [req.user.id]
+      [req.user.userId]
     );
     
     if (result.rows.length === 0) {
@@ -294,7 +290,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
     
     const result = await client.query(
       'UPDATE users SET full_name = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email, full_name, updated_at',
-      [full_name, req.user.id]
+      [full_name, req.user.userId]
     );
     
     if (result.rows.length === 0) {
@@ -338,7 +334,7 @@ router.put('/change-password', authenticateToken, validatePassword, async (req, 
     // Get user with password
     const userResult = await client.query(
       'SELECT password FROM users WHERE id = $1',
-      [req.user.id]
+      [req.user.userId]
     );
     
     if (userResult.rows.length === 0) {
@@ -368,7 +364,7 @@ router.put('/change-password', authenticateToken, validatePassword, async (req, 
     // Update password
     await client.query(
       'UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2',
-      [hashedPassword, req.user.id]
+      [hashedPassword, req.user.userId]
     );
     
     res.json({
