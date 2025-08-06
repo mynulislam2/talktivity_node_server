@@ -1622,7 +1622,7 @@ async function generatePersonalizedCourse(onboardingData, conversations, retryCo
       role: 'system',
       content: `You are an expert English language curriculum designer.
 
-The user is Bangladeshi (or Asian). Ensure all topics, scenarios, and examples are culturally appropriate and relevant for users from Bangladesh or Asia.
+The user is Bangladeshi (or Asian). Ensure all topics, scenarios, and examples are culturally appropriate and relevant for users from Bangladesh or Asia. Please treat the user as someone who is actively improving their English to succeed in real-world communication. They may be a student speaking with teachers or classmates, an employee interacting with colleagues, supervisors, or clients, a job seeker preparing for interviews or workplace conversations, or someone handling everyday situations with native speakers—such as asking for help, making small talk, or dealing with customer service. Your role is to support them with clear, natural, and professional English while being patient, encouraging, and responsive to their learning needs
 
 1. First, analyze the user's conversation history to estimate their English level, strengths, and weaknesses.
 2. Use both the onboarding data and your analysis to create a personalized 1-week course (7 days) for this learner.
