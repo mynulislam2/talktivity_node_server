@@ -241,11 +241,11 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
     const totalSeconds = parseInt(sumResult.rows[0].total_seconds, 10);
     const maxSeconds = 5 * 60;
     const timeRemaining = Math.max(0, maxSeconds - totalSeconds);
-    // speakingAvailable: true if timeRemaining > 0 and not marked completed
-    const speakingAvailable = timeRemaining > 0 && !(todayProgress && todayProgress.speaking_completed);
-
     // Determine what's available today
     const dayType = getDayType(currentDay);
+    
+    // speakingAvailable: true if timeRemaining > 0 and not marked completed
+    const speakingAvailable = timeRemaining > 0 && !(todayProgress && todayProgress.speaking_completed);
 
     // Get today's personalized topic
     let todayTopic = null;
@@ -1650,7 +1650,7 @@ here is the example of the topic structure:
   "title": "A Memorable Travel Experience",
   "imageUrl": "https://placehold.co/400x600/1a202c/ffffff?text=Travel+Experience",
   "prompt": "You're a friendly and curious English-speaking AI tutor. In this session, help the user practice speaking about a memorable travel experience. Ask follow-up questions about where they went, who they went with, what they saw or did, and how they felt. Correct their grammar gently and encourage descriptive, fluent storytelling.",
-  "firstPrompt": "Start the conversation by saying exactly this and nothing else:  'Hi! our Today’s topic is: A Memorable Travel Experience. Can you tell me about a trip you’ve taken that you’ll never forget?'",
+  "firstPrompt": "Start the conversation by saying exactly this and nothing else:  'Hi! our Today's topic is: A Memorable Travel Experience. Can you tell me about a trip you've taken that you'll never forget?'",
   "isCustom": false,
   "category": "Personalized Topics"
 }
@@ -1840,11 +1840,32 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
         const personalizedTopic = dayIndex < personalizedTopics.length ? personalizedTopics[dayIndex] : null;
         const progress = progressMap[dateStr] || null;
         
-        const isCompleted = progress && (
-          (dayType === 'all_activities' && progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed) ||
-          (dayType === 'quiz_only' && progress.quiz_completed) ||
-          (dayType === 'speaking_exam' && progress.speaking_completed)
-        );
+        // Updated isCompleted logic to match frontend
+        let isCompleted = false;
+        if (progress) {
+          switch (dayType) {
+            case 'speaking_quiz':
+              isCompleted = progress.speaking_completed && progress.quiz_completed;
+              break;
+            case 'quiz_only':
+              isCompleted = progress.quiz_completed;
+              break;
+            case 'speaking_exam':
+              isCompleted = progress.speaking_completed;
+              break;
+            case 'listening_quiz':
+              isCompleted = progress.listening_completed && progress.listening_quiz_completed;
+              break;
+            case 'speaking_listening_quiz':
+              isCompleted = progress.speaking_completed && progress.listening_completed && progress.listening_quiz_completed;
+              break;
+            case 'all_activities':
+              isCompleted = progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed;
+              break;
+            default:
+              isCompleted = false;
+          }
+        }
 
         const isCurrentDay = week === currentWeek && day === currentDay;
         const isPast = date < new Date();
@@ -2148,14 +2169,18 @@ router.get('/courses/achievements', authenticateToken, async (req, res) => {
     // Calculate various achievements
     const achievements = await client.query(`
       SELECT 
-        -- Streak achievements
+        -- Streak achievements (same logic as analytics)
         (SELECT COUNT(*) FROM (
           WITH consecutive_days AS (
             SELECT date,
                    ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                    date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
             FROM daily_progress
-            WHERE user_id = $1 AND course_id = $2 AND speaking_completed = true
+            WHERE user_id = $1 AND course_id = $2 
+              AND speaking_completed = true 
+              AND quiz_completed = true 
+              AND listening_completed = true 
+              AND listening_quiz_completed = true
           )
           SELECT COUNT(*) as streak_length
           FROM consecutive_days
@@ -2391,7 +2416,7 @@ router.get('/courses/weekly-progress', authenticateToken, async (req, res) => {
 
 // Helper functions
 function getDayType(dayNumber) {
-  // For the first 5 days, all activities (speaking, quiz, listening, listening quiz) are available
+  // Days 1-5: Speaking Zone + Quiz + Listening Zone + Listening Quiz
   if (dayNumber >= 1 && dayNumber <= 5) {
     return 'all_activities';
   } else if (dayNumber === 6) {
