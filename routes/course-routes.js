@@ -233,6 +233,9 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
     const currentWeek = Math.floor(daysSinceStart / 7) + 1;
     const currentDay = (daysSinceStart % 7) + 1;
 
+    // Note: Batch generation is now triggered by Day 7 completion in completion endpoints
+    // This automatic check has been removed to prevent continuous progression checking
+
     // Sum all speaking session durations for today
     const sumResult = await client.query(
       'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM speaking_sessions WHERE user_id = $1 AND date = $2',
@@ -420,6 +423,9 @@ router.post('/courses/speaking/end', authenticateToken, async (req, res) => {
            speaking_duration_seconds = $6`,
         [userId, course.id, currentWeek, currentDay, today, totalSeconds]
       );
+
+      // Check if this is the last day of the current batch and trigger next batch generation
+      await checkAndTriggerNextBatch(client, userId, currentDay, currentWeek);
     }
     res.json({
       success: true,
@@ -822,6 +828,9 @@ router.post('/courses/quiz/complete', authenticateToken, async (req, res) => {
       [score, userId, today]
     );
 
+    // Check if this is the last day of the current batch and trigger next batch generation
+    await checkAndTriggerNextBatch(client, userId, progress.day_number, progress.week_number);
+
     res.json({
       success: true,
       message: 'Quiz completed',
@@ -952,6 +961,9 @@ router.post('/courses/listening/complete', authenticateToken, async (req, res) =
       [durationSeconds, userId, today]
     );
 
+    // Check if this is the last day of the current batch and trigger next batch generation
+    await checkAndTriggerNextBatch(client, userId, progress.day_number, progress.week_number);
+
     res.json({
       success: true,
       message: 'Listening completed',
@@ -1004,6 +1016,9 @@ router.post('/courses/listening-quiz/complete', authenticateToken, async (req, r
        WHERE user_id = $2 AND date = $3`,
       [score, userId, today]
     );
+
+    // Check if this is the last day of the current batch and trigger next batch generation
+    await checkAndTriggerNextBatch(client, userId, progress.day_number, progress.week_number);
 
     res.json({
       success: true,
@@ -2541,6 +2556,324 @@ function isListeningQuizAvailable(dayType, progress) {
   
   // For all_activities days, listening quiz is only available after listening is completed
   return progress.listening_completed;
+}
+
+// Generate next batch of personalized topics
+router.post('/courses/generate-next-batch', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    console.log('Generate next batch request for user:', req.user);
+    client = await db.pool.connect();
+    
+    const userId = req.user.id;
+    console.log('User ID:', userId);
+
+    // Get user's current active course
+    const currentCourseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (currentCourseResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active course found'
+      });
+    }
+
+    const currentCourse = currentCourseResult.rows[0];
+    const nextBatchNumber = (currentCourse.batch_number || 1) + 1;
+
+    // Get user's fingerprint_id to link with onboarding data
+    const userResult = await client.query(
+      'SELECT fingerprint_id FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    const userFingerprint = userResult.rows[0]?.fingerprint_id;
+
+    // Get onboarding data using fingerprint_id
+    let onboardingResult = { rows: [] };
+    if (userFingerprint) {
+      onboardingResult = await client.query(
+        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
+        [userFingerprint]
+      );
+    }
+
+    // If no onboarding data found with fingerprint_id, try device IDs
+    if (onboardingResult.rows.length === 0) {
+      const deviceIdsResult = await client.query(
+        'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
+        [userId]
+      );
+      const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
+      
+      if (deviceIds.length > 0) {
+        onboardingResult = await client.query(
+          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
+          [deviceIds]
+        );
+      }
+    }
+
+    // Only proceed if onboarding data exists
+    if (onboardingResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Onboarding data not found. Please complete onboarding first.'
+      });
+    }
+
+    // Get user's conversation history
+    const conversationResult = await client.query(
+      'SELECT transcript FROM conversations WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 5',
+      [userId]
+    );
+    
+    const conversations = conversationResult.rows.map(row => row.transcript);
+
+    // Generate personalized topics for the next batch
+    const onboardingData = onboardingResult.rows[0];
+    let personalizedTopics;
+    
+    try {
+      personalizedTopics = await generatePersonalizedCourse(onboardingData, conversations);
+      console.log('Next batch personalized course generated with', personalizedTopics.length, 'topics');
+    } catch (error) {
+      console.error('Error generating next batch personalized course:', error);
+      return res.status(400).json({
+        success: false,
+        error: 'Failed to generate next batch personalized course. Please try again.'
+      });
+    }
+
+    // Only create course if personalized topics are generated
+    if (!personalizedTopics || personalizedTopics.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personalized topics could not be generated for next batch. Please try again.'
+      });
+    }
+
+    // Create new course with personalized topics (not active yet)
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
+
+    const result = await client.query(
+      `INSERT INTO user_courses (user_id, course_start_date, course_end_date, current_week, current_day, is_active, personalized_topics, batch_number, batch_status)
+       VALUES ($1, $2, $3, 1, 1, false, $4, $5, $6)
+       RETURNING *`,
+      [
+        userId, 
+        startDate, 
+        endDate, 
+        JSON.stringify(personalizedTopics), 
+        nextBatchNumber,
+        JSON.stringify({
+          action: 'activate_next_batch',
+          message: `Batch ${nextBatchNumber} is ready to activate`,
+          batchNumber: nextBatchNumber
+        })
+      ]
+    );
+
+    // Update current course to indicate next batch is ready
+    await client.query(
+      `UPDATE user_courses 
+       SET batch_status = $1 
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          action: 'next_batch_ready',
+          message: `Batch ${nextBatchNumber} has been generated and is ready to activate`,
+          batchNumber: nextBatchNumber
+        }),
+        currentCourse.id
+      ]
+    );
+
+    console.log('Next batch course created successfully:', result.rows[0]);
+    res.status(201).json({
+      success: true,
+      data: {
+        ...result.rows[0],
+        personalizedTopicsCount: personalizedTopics.length,
+        batchNumber: nextBatchNumber
+      },
+      message: `Batch ${nextBatchNumber} generated successfully`
+    });
+
+  } catch (error) {
+    console.error('Error generating next batch:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate next batch'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Activate next batch of personalized topics
+router.post('/courses/activate-next-batch', authenticateToken, async (req, res) => {
+  let client;
+  try {
+    console.log('Activate next batch request for user:', req.user);
+    client = await db.pool.connect();
+    
+    const userId = req.user.id;
+    console.log('User ID:', userId);
+
+    // Find the course that's ready to be activated
+    const nextBatchResult = await client.query(
+      `SELECT * FROM user_courses 
+       WHERE user_id = $1 AND is_active = false 
+       AND batch_status->>'action' = 'activate_next_batch'
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+
+    if (nextBatchResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No next batch found to activate'
+      });
+    }
+
+    const nextBatchCourse = nextBatchResult.rows[0];
+
+    // Deactivate all current active courses for this user
+    await client.query(
+      'UPDATE user_courses SET is_active = false WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    // Activate the next batch course
+    const currentDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
+
+    await client.query(
+      `UPDATE user_courses 
+       SET is_active = true, 
+           course_start_date = $1, 
+           course_end_date = $2, 
+           current_week = 1, 
+           current_day = 1, 
+           batch_status = NULL 
+       WHERE id = $3`,
+      [currentDate, endDate, nextBatchCourse.id]
+    );
+
+    console.log('Next batch activated successfully:', nextBatchCourse.id);
+    res.json({
+      success: true,
+      data: {
+        courseId: nextBatchCourse.id,
+        batchNumber: nextBatchCourse.batch_number,
+        personalizedTopicsCount: nextBatchCourse.personalized_topics?.length || 0
+      },
+      message: `Batch ${nextBatchCourse.batch_number} activated successfully`
+    });
+
+  } catch (error) {
+    console.error('Error activating next batch:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to activate next batch'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Helper function to check and trigger next batch generation when the last day of the current batch is completed
+async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek) {
+  try {
+    console.log(`Checking for batch completion for user ${userId}, week ${currentWeek}, day ${currentDay}`);
+    
+    // Get user's current active course
+    const currentCourseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+
+    if (currentCourseResult.rows.length === 0) {
+      console.log('No active course found for user');
+      return;
+    }
+
+    const currentCourse = currentCourseResult.rows[0];
+    
+    // Check if this is the first time we're triggering for this week
+    if (currentCourse.batch_status && currentCourse.batch_status.action === 'generate_next_batch') {
+      console.log('Batch generation already triggered for this week');
+      return;
+    }
+
+    // Determine if this is the last day of the current batch
+    // For now, each batch is 7 days (1 week), but this can be made configurable
+    const BATCH_DURATION_DAYS = 7; // This could be made configurable per course or user
+    const isLastDayOfBatch = currentDay === BATCH_DURATION_DAYS;
+    
+    if (!isLastDayOfBatch) {
+      console.log(`Not the last day of batch. Current day: ${currentDay}, Batch duration: ${BATCH_DURATION_DAYS}`);
+      return;
+    }
+
+    // Check if this is the final week (12 weeks = 3 months)
+    const TOTAL_COURSE_WEEKS = 12;
+    const isFinalWeek = currentWeek >= TOTAL_COURSE_WEEKS;
+    
+    if (isFinalWeek) {
+      console.log(`Course completed! User ${userId} has finished all ${TOTAL_COURSE_WEEKS} weeks`);
+      
+      // Set course as completed instead of generating next batch
+      await client.query(
+        `UPDATE user_courses 
+         SET batch_status = $1 
+         WHERE id = $2`,
+        [
+          JSON.stringify({
+            action: 'course_completed',
+            message: `Congratulations! You have completed the full 3-month course!`,
+            completedWeek: currentWeek,
+            completedDay: currentDay,
+            totalWeeks: TOTAL_COURSE_WEEKS
+          }),
+          currentCourse.id
+        ]
+      );
+      
+      console.log(`Course marked as completed for user ${userId}, week ${currentWeek}, day ${currentDay}`);
+      return;
+    }
+
+    const nextBatchNumber = (currentCourse.batch_number || 1) + 1;
+    
+    // Set batch status to trigger next batch generation
+    await client.query(
+      `UPDATE user_courses 
+       SET batch_status = $1 
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          action: 'generate_next_batch',
+          message: `Batch ${currentCourse.batch_number || 1} completed! Ready to generate batch ${nextBatchNumber}`,
+          batchNumber: nextBatchNumber,
+          completedWeek: currentWeek,
+          completedDay: currentDay
+        }),
+        currentCourse.id
+      ]
+    );
+
+    console.log(`Batch generation triggered for user ${userId}, week ${currentWeek}, day ${currentDay}, batch ${nextBatchNumber}`);
+  } catch (error) {
+    console.error('Error in checkAndTriggerNextBatch:', error);
+  }
 }
 
 module.exports = router; 
