@@ -99,7 +99,7 @@ async function testBatchCompletion() {
       
       console.log(`   Batch generation response:`, generateResponse.data);
 
-      // Check status again to see if batch is ready for activation
+      // Check status again (activation removed in single-course mode)
       const finalStatusResponse = await axios.get(`${BASE_URL}/api/courses/status`, {
         headers: {
           'Authorization': `Bearer ${process.env.TEST_TOKEN || 'your-test-token-here'}`
@@ -108,18 +108,7 @@ async function testBatchCompletion() {
       
       const finalCourseStatus = finalStatusResponse.data.data;
       console.log(`   Final Batch Status: ${JSON.stringify(finalCourseStatus.course.batchStatus)}`);
-
-      if (finalCourseStatus.course.batchStatus?.action === 'activate_next_batch') {
-        console.log('\n5️⃣ Testing batch activation...');
-        
-        const activateResponse = await axios.post(`${BASE_URL}/api/courses/activate-next-batch`, {}, {
-          headers: {
-            'Authorization': `Bearer ${process.env.TEST_TOKEN || 'your-test-token-here'}`
-          }
-        });
-        
-        console.log(`   Batch activation response:`, activateResponse.data);
-      }
+      console.log('   Activation step removed; no activation call performed.');
     }
 
     console.log('\n✅ Batch completion test completed successfully!');

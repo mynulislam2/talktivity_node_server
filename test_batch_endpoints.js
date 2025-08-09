@@ -38,27 +38,13 @@ async function testBatchEndpoints() {
       console.log('');
     }
 
-    // Test 3: Activate next batch (if ready)
+    // Test 3: Check status after generation (activation removed in single-course mode)
     const updatedStatusResponse = await axios.get(`${BASE_URL}/api/courses/status`, {
       headers: {
         'Authorization': `Bearer ${AUTH_TOKEN}`
       }
     });
-
-    if (updatedStatusResponse.data.data?.course?.batchStatus?.action === 'activate_next_batch') {
-      console.log('3. Activating next batch...');
-      const activateResponse = await axios.post(`${BASE_URL}/api/courses/activate-next-batch`, {}, {
-        headers: {
-          'Authorization': `Bearer ${AUTH_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      console.log('✅ Next batch activated:', activateResponse.data);
-      console.log('');
-    } else {
-      console.log('3. Skipping batch activation (not ready)');
-      console.log('');
-    }
+    console.log('3. Activation step removed; current batch status:', updatedStatusResponse.data.data?.course?.batchStatus);
 
     // Test 4: Final status check
     console.log('4. Final course status...');

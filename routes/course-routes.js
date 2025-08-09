@@ -2609,7 +2609,7 @@ function isListeningQuizAvailable(dayType, progress) {
   return progress.listening_completed;
 }
 
-// Generate next batch of personalized topics
+// Generate next batch of personalized topics (append to current course, do not create a new course)
 router.post('/courses/generate-next-batch', authenticateToken, async (req, res) => {
   let client;
   try {
@@ -2707,53 +2707,34 @@ router.post('/courses/generate-next-batch', authenticateToken, async (req, res) 
       });
     }
 
-    // Create new course with personalized topics (not active yet)
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
+    // Append new topics to the existing active course without resetting progress or dates
+    const updatedTopics = Array.isArray(currentCourse.personalized_topics)
+      ? currentCourse.personalized_topics.concat(personalizedTopics)
+      : personalizedTopics;
 
-    const result = await client.query(
-      `INSERT INTO user_courses (user_id, course_start_date, course_end_date, current_week, current_day, is_active, personalized_topics, batch_number, batch_status)
-       VALUES ($1, $2, $3, 1, 1, false, $4, $5, $6)
+    const updateResult = await client.query(
+      `UPDATE user_courses 
+       SET personalized_topics = $1::jsonb, 
+           batch_number = $2, 
+           batch_status = NULL
+       WHERE id = $3
        RETURNING *`,
       [
-        userId, 
-        startDate, 
-        endDate, 
-        JSON.stringify(personalizedTopics), 
+        JSON.stringify(updatedTopics),
         nextBatchNumber,
-        JSON.stringify({
-          action: 'activate_next_batch',
-          message: `Batch ${nextBatchNumber} is ready to activate`,
-          batchNumber: nextBatchNumber
-        })
-      ]
-    );
-
-    // Update current course to indicate next batch is ready
-    await client.query(
-      `UPDATE user_courses 
-       SET batch_status = $1 
-       WHERE id = $2`,
-      [
-        JSON.stringify({
-          action: 'next_batch_ready',
-          message: `Batch ${nextBatchNumber} has been generated and is ready to activate`,
-          batchNumber: nextBatchNumber
-        }),
         currentCourse.id
       ]
     );
 
-    console.log('Next batch course created successfully:', result.rows[0]);
+    console.log('Next batch topics appended successfully for course:', currentCourse.id);
     res.status(201).json({
       success: true,
       data: {
-        ...result.rows[0],
-        personalizedTopicsCount: personalizedTopics.length,
+        ...updateResult.rows[0],
+        personalizedTopicsCount: updatedTopics.length,
         batchNumber: nextBatchNumber
       },
-      message: `Batch ${nextBatchNumber} generated successfully`
+      message: `Batch ${nextBatchNumber} appended successfully`
     });
 
   } catch (error) {
@@ -2767,78 +2748,8 @@ router.post('/courses/generate-next-batch', authenticateToken, async (req, res) 
   }
 });
 
-// Activate next batch of personalized topics
-router.post('/courses/activate-next-batch', authenticateToken, async (req, res) => {
-  let client;
-  try {
-    console.log('Activate next batch request for user:', req.user);
-    client = await db.pool.connect();
-    
-    const userId = req.user.id;
-    console.log('User ID:', userId);
-
-    // Find the course that's ready to be activated
-    const nextBatchResult = await client.query(
-      `SELECT * FROM user_courses 
-       WHERE user_id = $1 AND is_active = false 
-       AND batch_status->>'action' = 'activate_next_batch'
-       ORDER BY created_at DESC LIMIT 1`,
-      [userId]
-    );
-
-    if (nextBatchResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No next batch found to activate'
-      });
-    }
-
-    const nextBatchCourse = nextBatchResult.rows[0];
-
-    // Deactivate all current active courses for this user
-    await client.query(
-      'UPDATE user_courses SET is_active = false WHERE user_id = $1 AND is_active = true',
-      [userId]
-    );
-
-    // Activate the next batch course
-    const currentDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
-
-    await client.query(
-      `UPDATE user_courses 
-       SET is_active = true, 
-           course_start_date = $1, 
-           course_end_date = $2, 
-           current_week = 1, 
-           current_day = 1, 
-           batch_status = NULL 
-       WHERE id = $3`,
-      [currentDate, endDate, nextBatchCourse.id]
-    );
-
-    console.log('Next batch activated successfully:', nextBatchCourse.id);
-    res.json({
-      success: true,
-      data: {
-        courseId: nextBatchCourse.id,
-        batchNumber: nextBatchCourse.batch_number,
-        personalizedTopicsCount: nextBatchCourse.personalized_topics?.length || 0
-      },
-      message: `Batch ${nextBatchCourse.batch_number} activated successfully`
-    });
-
-  } catch (error) {
-    console.error('Error activating next batch:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to activate next batch'
-    });
-  } finally {
-    if (client) client.release();
-  }
-});
+// Activate next batch of personalized topics (no-op in single-course mode; clears batch status)
+// Note: '/courses/activate-next-batch' endpoint removed in single-course mode
 
 // Helper function to check and trigger next batch generation when the last day of the current batch is completed
 async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek) {
@@ -2913,7 +2824,7 @@ async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek)
         JSON.stringify({
           action: 'generate_next_batch',
           message: `Batch ${currentCourse.batch_number || 1} completed! Ready to generate batch ${nextBatchNumber}`,
-          batchNumber: nextBatchNumber,
+          batch_number: nextBatchNumber,
           completedWeek: currentWeek,
           completedDay: currentDay
         }),
