@@ -806,16 +806,40 @@ router.post('/courses/quiz/complete', authenticateToken, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
 
     // Get today's progress
-    const progressResult = await client.query(
+    let progressResult = await client.query(
       'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
       [userId, today]
     );
 
+    // If no progress row exists (e.g., Day 6 quiz-only), create it first
     if (progressResult.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No daily progress found'
-      });
+      // Get user's active course
+      const courseResult = await client.query(
+        'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true',
+        [userId]
+      );
+
+      if (courseResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'No active course found' });
+      }
+
+      const course = courseResult.rows[0];
+      const courseStart = new Date(course.course_start_date);
+      const daysSinceStart = Math.floor((new Date() - courseStart) / (1000 * 60 * 60 * 24));
+      const currentWeek = Math.floor(daysSinceStart / 7) + 1;
+      const currentDay = (daysSinceStart % 7) + 1;
+
+      await client.query(
+        `INSERT INTO daily_progress (user_id, course_id, week_number, day_number, date)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [userId, course.id, currentWeek, currentDay, today]
+      );
+
+      // Re-fetch progress after insert
+      progressResult = await client.query(
+        'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
+        [userId, today]
+      );
     }
 
     const progress = progressResult.rows[0];
@@ -1137,7 +1161,13 @@ router.get('/courses/progress', authenticateToken, async (req, res) => {
          COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
          COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
          COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
-         COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
+         COUNT(
+           CASE WHEN (
+             (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+             OR (day_number = 6 AND quiz_completed)
+             OR (day_number = 7 AND speaking_completed)
+           ) THEN 1 END
+         ) as complete_days,
          AVG(quiz_score) as avg_quiz_score,
          AVG(listening_quiz_score) as avg_listening_quiz_score
        FROM daily_progress 
@@ -2017,11 +2047,18 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
         COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
         COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
-        COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
+        -- Day-type-aware completion
+        COUNT(
+          CASE WHEN (
+            (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+            OR (day_number = 6 AND quiz_completed)
+            OR (day_number = 7 AND speaking_completed)
+          ) THEN 1 END
+        ) as complete_days,
         AVG(quiz_score) as avg_quiz_score,
         AVG(listening_quiz_score) as avg_listening_quiz_score,
         
-        -- Streak calculations
+        -- Streak calculations (last dates by activity)
         MAX(CASE WHEN speaking_completed = true THEN date END) as last_speaking_date,
         MAX(CASE WHEN quiz_completed = true THEN date END) as last_quiz_date,
         MAX(CASE WHEN listening_completed = true THEN date END) as last_listening_date,
@@ -2060,20 +2097,24 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
 
     // Calculate current streak
     const streakResult = await client.query(`
-      WITH consecutive_days AS (
+      WITH completed_days AS (
+        SELECT date
+        FROM daily_progress
+        WHERE user_id = $1 AND course_id = $2
+          AND (
+            (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+            OR (day_number = 6 AND quiz_completed)
+            OR (day_number = 7 AND speaking_completed)
+          )
+      ), consecutive AS (
         SELECT date,
                ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
-        FROM daily_progress
-        WHERE user_id = $1 AND course_id = $2 
-          AND speaking_completed = true 
-          AND quiz_completed = true 
-          AND listening_completed = true 
-          AND listening_quiz_completed = true
+        FROM completed_days
       )
       SELECT COUNT(*) as current_streak
-      FROM consecutive_days
-      WHERE grp = (SELECT grp FROM consecutive_days WHERE date = CURRENT_DATE)
+      FROM consecutive
+      WHERE grp = (SELECT grp FROM consecutive WHERE date = CURRENT_DATE)
     `, [userId, course.id]);
 
     // Get monthly trends (last 6 months)
@@ -2085,7 +2126,13 @@ router.get('/courses/analytics', authenticateToken, async (req, res) => {
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
         COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
         COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
-        COUNT(CASE WHEN speaking_completed = true AND quiz_completed = true AND listening_completed = true AND listening_quiz_completed = true THEN 1 END) as complete_days,
+        COUNT(
+          CASE WHEN (
+            (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+            OR (day_number = 6 AND quiz_completed)
+            OR (day_number = 7 AND speaking_completed)
+          ) THEN 1 END
+        ) as complete_days,
         AVG(quiz_score) as avg_quiz_score,
         AVG(listening_quiz_score) as avg_listening_quiz_score,
         SUM(speaking_duration_seconds) as total_speaking_time,
@@ -2186,16 +2233,20 @@ router.get('/courses/achievements', authenticateToken, async (req, res) => {
       SELECT 
         -- Streak achievements (same logic as analytics)
         (SELECT COUNT(*) FROM (
-          WITH consecutive_days AS (
+          WITH completed_days AS (
+            SELECT date
+            FROM daily_progress
+            WHERE user_id = $1 AND course_id = $2
+              AND (
+                (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+                OR (day_number = 6 AND quiz_completed)
+                OR (day_number = 7 AND speaking_completed)
+              )
+          ), consecutive_days AS (
             SELECT date,
                    ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                    date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
-            FROM daily_progress
-            WHERE user_id = $1 AND course_id = $2 
-              AND speaking_completed = true 
-              AND quiz_completed = true 
-              AND listening_completed = true 
-              AND listening_quiz_completed = true
+            FROM completed_days
           )
           SELECT COUNT(*) as streak_length
           FROM consecutive_days
