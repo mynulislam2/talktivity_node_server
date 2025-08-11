@@ -118,8 +118,58 @@ router.post('/generate', async (req, res) => {
     }
 });
 
+// Helper function to validate AI response doesn't contain sample data
+const validateAIResponse = (aiResponse, transcriptData) => {
+    const responseString = JSON.stringify(aiResponse).toLowerCase();
+    const transcriptString = JSON.stringify(transcriptData).toLowerCase();
+    
+    // Check for common sample data indicators
+    const sampleDataIndicators = [
+        'development',
+        'project', 
+        'question',
+        'involved',
+        'skilled',
+        'proficient',
+        'delighted',
+        'thrilled',
+        'good developer',
+        'happy to be here',
+        'i have plan for it',
+        'i have a plan for it',
+        'how they are it is evolving',
+        'how it is evolving',
+        'i will explain you the idea',
+        'i will explain the idea to you'
+    ];
+    
+    // Check if response contains sample data that's not in the transcript
+    for (const indicator of sampleDataIndicators) {
+        if (responseString.includes(indicator.toLowerCase()) && 
+            !transcriptString.includes(indicator.toLowerCase())) {
+            console.warn(`⚠️ AI response contains sample data: ${indicator}`);
+            return false;
+        }
+    }
+    
+    // Check if response is too generic (no specific transcript references)
+    const transcriptWords = transcriptString.split(/\s+/).filter(word => word.length > 3);
+    const responseWords = responseString.split(/\s+/).filter(word => word.length > 3);
+    
+    // Count how many transcript words appear in the response
+    const matchingWords = transcriptWords.filter(word => responseWords.includes(word));
+    const matchPercentage = (matchingWords.length / transcriptWords.length) * 100;
+    
+    if (matchPercentage < 10) { // Less than 10% of transcript words used
+        console.warn(`⚠️ AI response may not be based on transcript (only ${matchPercentage.toFixed(1)}% word match)`);
+        return false;
+    }
+    
+    return true;
+};
+
 // Helper function to generate report using Groq API
-const generateReportWithGroq = async (transcriptData) => {
+const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
     try {
         const url = "https://api.groq.com/openai/v1/chat/completions";
         
@@ -318,9 +368,16 @@ const generateReportWithGroq = async (transcriptData) => {
             messages: [
                 {
                     role: "system",
-                    content: `You are a world-class English language assessment AI. Your ONLY job is to return a JSON object that matches the following structure exactly (see below).
+                    content: `You are a world-class English language assessment AI. Your ONLY job is to analyze the provided conversation transcript and return a JSON object that matches the required structure.
 
-IMPORTANT: For the 'grammarErrors' field, you MUST return EVERY grammar error for EVERY sentence in the transcript, not just a sample. Be exhaustive and detailed. For each error, provide the category, the user's actual sentence, the correction, and a brief explanation. Do not skip any errors. For all other sections, provide the most detailed, specific, and actionable analysis possible, referencing the user's actual words and sentences. Do not summarize or generalize—be as granular as possible.
+CRITICAL RULES:
+1. Analyze ONLY the conversation transcript provided by the user
+2. DO NOT use any data from the sample structure below - it's ONLY for showing the required JSON format
+3. DO NOT use any general knowledge, previous conversations, or external data
+4. Base your analysis EXCLUSIVELY on the user's actual words and sentences from the transcript
+5. For grammar errors, find EVERY error in the transcript, not just examples
+6. Use the user's actual sentences for examples and feedback
+7. If the transcript is too short or unclear, indicate this in your analysis
 
 You must:
 - Output ONLY a valid JSON object (no markdown, no extra text)
@@ -356,11 +413,13 @@ You must:
 The structure to use is exactly as in the following example (all fields required, types must match):
 ${JSON.stringify(SAMPLE_REPORT, null, 2)}
 
-Analyze ONLY the transcript provided. Reference the user's actual words for examples and feedback. If a field cannot be filled, set it to null. If the transcript is too short, indicate this in your analysis.`
+IMPORTANT: The sample above is ONLY for showing the required JSON structure. DO NOT use any of its data or content. Analyze ONLY the transcript provided. Reference the user's actual words for examples and feedback. If a field cannot be filled, set it to null. If the transcript is too short, indicate this in your analysis.`
                 },
                 {
                     role: "user",
-                    content: `IMPORTANT: Analyze ONLY the conversation transcript I provide below. Do NOT use any other data, previous conversations, or general knowledge. Base your analysis EXCLUSIVELY on this specific conversation.
+                    content: `CRITICAL INSTRUCTIONS: Analyze ONLY the conversation transcript I provide below. Do NOT use any other data, previous conversations, or general knowledge. Base your analysis EXCLUSIVELY on this specific conversation.
+
+IMPORTANT: The sample report structure I showed you is ONLY for the JSON format - DO NOT use any of its data, examples, or content. Use ONLY the transcript data below.
 
 For the 'grammarErrors' field, you MUST return EVERY grammar error for EVERY sentence in the transcript, not just a sample. Be exhaustive and detailed. For each error, provide the category, the user's actual sentence, the correction, and a brief explanation. Do not skip any errors. For all other sections, provide the most detailed, specific, and actionable analysis possible, referencing the user's actual words and sentences. Do not summarize or generalize—be as granular as possible.
 
@@ -375,19 +434,20 @@ Here is the transcript of my latest conversation: ${JSON.stringify(transcriptDat
 - For rates, use plain numbers (e.g., "rate": 5, not "rate": "5 per minute")
 - For percentages, use plain numbers (e.g., "percentage": 20, not "percentage": "20%")
 - For scores, use plain numbers (e.g., "score": 75, not "score": "75%")
-- Use ONLY the provided transcript for analysis - nothing else.
-- Reference specific words, phrases, and sentences from the transcript.
-- Do NOT include explanations, disclaimers, or markdown.
-- Provide data in all required objects.
-- Be specific and actionable in feedback.
-- If the transcript is too short, indicate this in your analysis.
-- plese analyze only the user's words and sentences from the transcript.
-- please make sure you give the example sentence or anything else use the user's actual words and sentences.
-- always give the data type and the structure as i said.
-- don't ever give any extra text or anything else just directly the json
-- please when you give emoji give as string like this: "👍" or "🐢" or "🚀" . see here it wrapped with double quotes.
--  for example and feedback and suggestion or anything where you need some wrod or sentence use the user's actual words and sentences from the transcript.
-- make the output personalized and specific to the user's words and sentences.
+- Use ONLY the provided transcript for analysis - nothing else
+- Reference specific words, phrases, and sentences from the transcript
+- Do NOT include explanations, disclaimers, or markdown
+- Provide data in all required objects
+- Be specific and actionable in feedback
+- If the transcript is too short, indicate this in your analysis
+- Please analyze only the user's words and sentences from the transcript
+- Please make sure you give the example sentence or anything else use the user's actual words and sentences
+- Always give the data type and the structure as I said
+- Don't ever give any extra text or anything else just directly the JSON
+- Please when you give emoji give as string like this: "👍" or "🐢" or "🚀" . see here it wrapped with double quotes
+- For example and feedback and suggestion or anything where you need some word or sentence use the user's actual words and sentences from the transcript
+- Make the output personalized and specific to the user's words and sentences
+- DO NOT use any data from the sample structure - only use the transcript data above
 
 `
                 }
@@ -442,6 +502,21 @@ Here is the transcript of my latest conversation: ${JSON.stringify(transcriptDat
 
         try {
             const parsedData = JSON.parse(jsonString);
+            
+            // Validate that the AI response is based on actual transcript data
+            if (!validateAIResponse(parsedData, transcriptData)) {
+                console.error('❌ AI response contains sample data or is not based on transcript');
+                
+                // Retry up to 2 times if sample data is detected
+                if (retryCount < 2) {
+                    console.log(`🔄 Retrying report generation (attempt ${retryCount + 1}/3) due to sample data detection`);
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+                    return await generateReportWithGroq(transcriptData, retryCount + 1);
+                }
+                
+                throw new Error('AI response contains sample data instead of transcript analysis after retries');
+            }
+            
             return { success: true, data: parsedData };
         } catch (parseError) {
             console.error('Failed to parse AI response as JSON:', parseError, jsonString);

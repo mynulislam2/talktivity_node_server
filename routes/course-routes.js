@@ -1640,16 +1640,10 @@ async function generatePersonalizedCourse(onboardingData, conversations, retryCo
       industry: onboardingData.industry,
       interests: onboardingData.interests,
       workScenarios: onboardingData.work_scenarios,
-      upcomingOccasions: onboardingData.upcoming_occasions,
-      improvementAreas: onboardingData.improvement_areas,
       mainGoal: onboardingData.main_goal,
-      englishUsage: onboardingData.english_usage,
       speakingFeelings: onboardingData.speaking_feelings,
       speakingFrequency: onboardingData.speaking_frequency,
-      speakingObstacles: onboardingData.speaking_obstacles,
       currentLearningMethods: onboardingData.current_learning_methods,
-      learningChallenges: onboardingData.learning_challenges,
-      hardestPart: onboardingData.hardest_part,
       knownWords1: onboardingData.known_words_1,
       knownWords2: onboardingData.known_words_2,
       englishStyle: onboardingData.english_style,
@@ -1759,8 +1753,6 @@ PERSONALIZATION FACTORS:
 - Industry: ${contextData.onboarding.industry}
 - Interests: ${contextData.onboarding.interests?.join(', ')}
 - Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}
-- Upcoming occasions: ${contextData.onboarding.upcomingOccasions?.join(', ')}
-- Improvement areas: ${contextData.onboarding.improvementAreas?.join(', ')}
 - Main goal: ${contextData.onboarding.mainGoal}
 
 ${strictJsonWarning}`

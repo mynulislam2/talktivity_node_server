@@ -11,23 +11,17 @@ router.post('/onboarding', async (req, res) => {
       fingerprint_id,
       skill_to_improve,
       language_statement,
-      english_usage,
       industry,
       speaking_feelings,
       speaking_frequency,
-      improvement_areas,
       main_goal,
-      speaking_obstacles,
       gender,
       current_learning_methods,
-      learning_challenges,
-      hardest_part,
       current_level,
       native_language,
       known_words_1,
       known_words_2,
       work_scenarios,
-      upcoming_occasions,
       interests,
       english_style,
       tutor_style
@@ -55,62 +49,50 @@ console.log('Received onboarding data:', req.body);
         UPDATE onboarding_data SET
           skill_to_improve = $2,
           language_statement = $3,
-          english_usage = $4,
-          industry = $5,
-          speaking_feelings = $6,
-          speaking_frequency = $7,
-          improvement_areas = $8,
-          main_goal = $9,
-          speaking_obstacles = $10,
-          gender = $11,
-          current_learning_methods = $12,
-          learning_challenges = $13,
-          hardest_part = $14,
-          current_level = $15,
-          native_language = $16,
-          known_words_1 = $17,
-          known_words_2 = $18,
-          work_scenarios = $19,
-          upcoming_occasions = $20,
-          interests = $21,
-          english_style = $22,
-          tutor_style = $23,
+          industry = $4,
+          speaking_feelings = $5,
+          speaking_frequency = $6,
+          main_goal = $7,
+          gender = $8,
+          current_learning_methods = $9,
+          current_level = $10,
+          native_language = $11,
+          known_words_1 = $12,
+          known_words_2 = $13,
+          work_scenarios = $14,
+          interests = $15,
+          english_style = $16,
+          tutor_style = $17,
           updated_at = CURRENT_TIMESTAMP
         WHERE fingerprint_id = $1
         RETURNING *
       `, [
         fingerprint_id, skill_to_improve, language_statement,
-        JSON.stringify(english_usage), industry, speaking_feelings, speaking_frequency,
-        JSON.stringify(improvement_areas), main_goal, JSON.stringify(speaking_obstacles),
-        gender, JSON.stringify(current_learning_methods), JSON.stringify(learning_challenges),
-        hardest_part, current_level, native_language, JSON.stringify(known_words_1),
+        industry, speaking_feelings, speaking_frequency,
+        main_goal, gender, JSON.stringify(current_learning_methods),
+        current_level, native_language, JSON.stringify(known_words_1),
         JSON.stringify(known_words_2), JSON.stringify(work_scenarios),
-        JSON.stringify(upcoming_occasions), JSON.stringify(interests),
-        english_style, JSON.stringify(tutor_style)
+        JSON.stringify(interests), english_style, JSON.stringify(tutor_style)
       ]);
     } else {
       // Insert new record
       result = await client.query(`
         INSERT INTO onboarding_data (
           fingerprint_id, skill_to_improve, language_statement,
-          english_usage, industry, speaking_feelings, speaking_frequency,
-          improvement_areas, main_goal, speaking_obstacles, gender,
-          current_learning_methods, learning_challenges, hardest_part,
+          industry, speaking_feelings, speaking_frequency,
+          main_goal, gender, current_learning_methods,
           current_level, native_language, known_words_1, known_words_2,
-          work_scenarios, upcoming_occasions, interests, english_style, tutor_style
+          work_scenarios, interests, english_style, tutor_style
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
         ) RETURNING *
       `, [
         fingerprint_id, skill_to_improve, language_statement,
-        JSON.stringify(english_usage), industry, speaking_feelings, speaking_frequency,
-        JSON.stringify(improvement_areas), main_goal, JSON.stringify(speaking_obstacles),
-        gender, JSON.stringify(current_learning_methods), JSON.stringify(learning_challenges),
-        hardest_part, current_level, native_language, JSON.stringify(known_words_1),
+        industry, speaking_feelings, speaking_frequency,
+        main_goal, gender, JSON.stringify(current_learning_methods),
+        current_level, native_language, JSON.stringify(known_words_1),
         JSON.stringify(known_words_2), JSON.stringify(work_scenarios),
-        JSON.stringify(upcoming_occasions), JSON.stringify(interests),
-        english_style, JSON.stringify(tutor_style)
+        JSON.stringify(interests), english_style, JSON.stringify(tutor_style)
       ]);
     }
 

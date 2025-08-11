@@ -13,9 +13,9 @@ const pool = new Pool({
     max: 20, // Maximum number of clients in the pool
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
     connectionTimeoutMillis: 2000, // How long to wait for a connection to become available
-    // ssl:{
-    //     rejectUnauthorized: false // Disable SSL verification for development
-    // }
+    ssl:{
+        rejectUnauthorized: false // Disable SSL verification for development
+    }
 });
 
 // Handle pool errors globally
@@ -141,23 +141,17 @@ const initTables = async () => {
                 fingerprint_id VARCHAR(255) UNIQUE NOT NULL,
                 skill_to_improve VARCHAR(100),
                 language_statement VARCHAR(10),
-                english_usage JSONB DEFAULT '[]',
                 industry VARCHAR(100),
                 speaking_feelings VARCHAR(50),
                 speaking_frequency VARCHAR(50),
-                improvement_areas JSONB DEFAULT '[]',
                 main_goal VARCHAR(100),
-                speaking_obstacles JSONB DEFAULT '[]',
                 gender VARCHAR(20),
                 current_learning_methods JSONB DEFAULT '[]',
-                learning_challenges JSONB DEFAULT '[]',
-                hardest_part VARCHAR(100),
                 current_level VARCHAR(50),
                 native_language VARCHAR(100),
                 known_words_1 JSONB DEFAULT '[]',
                 known_words_2 JSONB DEFAULT '[]',
                 work_scenarios JSONB DEFAULT '[]',
-                upcoming_occasions JSONB DEFAULT '[]',
                 interests JSONB DEFAULT '[]',
                 english_style VARCHAR(50),
                 tutor_style JSONB DEFAULT '[]',
