@@ -9,6 +9,7 @@ const googleRoutes = require('./routes/google_auth');
 const topicRoutes = require('./routes/topic-routes');
 const courseRoutes = require('./routes/course-routes');
 const dailyReportsRoutes = require('./routes/daily-reports');
+const adminRoutes = require('./routes/admin-routes');
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -64,6 +65,7 @@ app.use('/api', onboardingRoutes);
 app.use('/api', topicRoutes);
 app.use('/api', courseRoutes);
 app.use('/api/daily-reports', dailyReportsRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/groups', groupChatRoutes);
 app.use('/api/dms', dmRoutes);
 
