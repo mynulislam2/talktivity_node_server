@@ -8,7 +8,6 @@ async function analyzeWithGroq(conversations) {
       role: 'system',
       content: `Analyze the following English conversation data and return a JSON object with these properties:
 - fluency: 0-100
-- pronunciation: 0-100
 - vocabulary: 0-100
 - grammar: 0-100
 - feedback: 1-2 sentences of constructive feedback

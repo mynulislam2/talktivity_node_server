@@ -1437,7 +1437,6 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
         console.log('No conversation data available for AI analysis, using fallback');
         aiAnalysis = {
           fluency: 70,
-          pronunciation: 75,
           vocabulary: 80,
           grammar: 72,
           feedback: 'No conversation data available for this month. Keep practicing to get personalized feedback!'
@@ -1446,7 +1445,7 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
                 const formattedMessages = [
           {
             role: 'system',
-            content: `Analyze the following English conversation data and return a JSON object with these properties:\n- fluency: 0-100\n- pronunciation: 0-100\n- vocabulary: 0-100\n- grammar: 0-100\n- feedback: 1-2 sentences of constructive feedback\n\nBase your analysis ONLY on the provided conversation turns. IMPORTANT: Return ONLY a valid JSON object. Do not include any explanatory text or markdown formatting. The response should start with '{' and end with '}'.`
+            content: `Analyze the following English conversation data and return a JSON object with these properties:\n- fluency: 0-100\n- vocabulary: 0-100\n- grammar: 0-100\n- feedback: 1-2 sentences of constructive feedback\n\nBase your analysis ONLY on the provided conversation turns. IMPORTANT: Return ONLY a valid JSON object. Do not include any explanatory text or markdown formatting. The response should start with '{' and end with '}'.`
           },
           ...allMessages
         ];
@@ -1492,7 +1491,6 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
     } catch (error) {
       aiAnalysis = {
         fluency: Math.floor(Math.random() * 100),
-        pronunciation: Math.floor(Math.random() * 100),
         vocabulary: Math.floor(Math.random() * 100),
         grammar: Math.floor(Math.random() * 100),
         feedback: 'This is a fallback. Groq API call failed.'

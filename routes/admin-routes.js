@@ -192,10 +192,22 @@ router.delete('/users/:userId', async (req, res) => {
     await client.query('BEGIN');
     
     // Check if it's a registered user or device
-    const userCheck = await client.query(
-      'SELECT id, fingerprint_id FROM users WHERE id = $1 OR fingerprint_id = $1',
+    // First try to find by fingerprint_id (string comparison)
+    let userCheck = await client.query(
+      'SELECT id, fingerprint_id FROM users WHERE fingerprint_id = $1',
       [userId]
     );
+    
+    // If not found by fingerprint_id, try to find by id (integer comparison)
+    if (userCheck.rows.length === 0) {
+      const numericId = parseInt(userId);
+      if (!isNaN(numericId)) {
+        userCheck = await client.query(
+          'SELECT id, fingerprint_id FROM users WHERE id = $1',
+          [numericId]
+        );
+      }
+    }
     
     const isRegisteredUser = userCheck.rows.length > 0;
     const fingerprintId = isRegisteredUser ? userCheck.rows[0].fingerprint_id : userId;
@@ -302,10 +314,22 @@ router.post('/users/bulk-delete', async (req, res) => {
     
     for (const userId of userIds) {
       // Check if it's a registered user or device
-      const userCheck = await client.query(
-        'SELECT id, fingerprint_id FROM users WHERE id = $1 OR fingerprint_id = $1',
+      // First try to find by fingerprint_id (string comparison)
+      let userCheck = await client.query(
+        'SELECT id, fingerprint_id FROM users WHERE fingerprint_id = $1',
         [userId]
       );
+      
+      // If not found by fingerprint_id, try to find by id (integer comparison)
+      if (userCheck.rows.length === 0) {
+        const numericId = parseInt(userId);
+        if (!isNaN(numericId)) {
+          userCheck = await client.query(
+            'SELECT id, fingerprint_id FROM users WHERE id = $1',
+            [numericId]
+          );
+        }
+      }
       
       const isRegisteredUser = userCheck.rows.length > 0;
       const fingerprintId = isRegisteredUser ? userCheck.rows[0].fingerprint_id : userId;

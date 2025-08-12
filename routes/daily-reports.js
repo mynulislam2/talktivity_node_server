@@ -127,47 +127,6 @@ const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
         
         // Sample report structure for the AI to follow - EXACTLY matching the original report page
         const SAMPLE_REPORT = {
-            "pronunciation": {
-                "pronunciationScore": 24,
-                "pronunciationLevel": "A2",
-                "improvementTarget": {
-                    "percentToNextLevel": 6,
-                    "nextLevel": "B1"
-                },
-                "accentType": "HEAVY ACCENT",
-                "accentDescription": "Your pronunciation shows influences from Indian languages, particularly in words like 'development' and 'project'.",
-                "improvementDescription": "Practice sounds /r/ and /v/. Focus on problematic consonants and mimic native stress and intonation.",
-                "soundChallenges": {
-                    "/r/": [
-                        {
-                            "word": "project",
-                            "accuracy": 18,
-                            "tip": "Place your tongue behind the top teeth; avoid rolling the 'r'."
-                        },
-                        {
-                            "word": "question",
-                            "accuracy": 68,
-                            "tip": "Use a softer 'r' sound — avoid rolling."
-                        }
-                    ],
-                    "/v/": [
-                        {
-                            "word": "development",
-                            "accuracy": 31,
-                            "tip": "Use your upper teeth against your lower lip."
-                        },
-                        {
-                            "word": "involved",
-                            "accuracy": 42,
-                            "tip": "Emphasize the 'v' clearly, not like 'w'."
-                        }
-                    ]
-                },
-                "intonationAndRhythm": {
-                    "score": 52,
-                    "feedback": "Your speech tends to be flat. Try to emphasize key words and use rising intonation for questions, e.g., 'Are you ready?'"
-                }
-            },
             "fluency": {
                 "fluencyScore": 59,
                 "fluencyLevel": "B2",
@@ -320,107 +279,125 @@ const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
             messages: [
                 {
                     role: "system",
-                    content: `You are a world-class English language assessment AI. Your ONLY job is to analyze the provided conversation transcript and return a JSON object that matches the required structure.
+                    content: `You are a world-class English language assessment AI specializing in comprehensive conversation analysis. Your task is to analyze the provided conversation transcript and generate a detailed, accurate report.
 
-CRITICAL RULES - READ CAREFULLY:
-1. Analyze ONLY the conversation transcript provided by the user
-2. DO NOT use any data from the sample structure below - it's ONLY for showing the required JSON format
-3. DO NOT use any general knowledge, previous conversations, or external data
-4. Base your analysis EXCLUSIVELY on the user's actual words and sentences from the transcript
-5. For grammar errors, find EVERY error in the transcript, not just examples
-6. Use the user's actual sentences for examples and feedback
-7. If the transcript is too short or unclear, indicate this in your analysis
-8. NEVER copy or adapt any content from the sample structure below
-9. NEVER use the sample words, sentences, or examples in your response
-10. NEVER use the sample feedback or descriptions in your response
+CRITICAL ANALYSIS REQUIREMENTS:
+1. Analyze ONLY the conversation transcript provided - no external data or assumptions
+2. Provide COMPREHENSIVE analysis of ALL aspects: fluency, vocabulary, grammar, and discourse
+3. For EVERY field in the report structure, provide meaningful data or set to null if insufficient information
+4. Use ONLY the user's actual words, sentences, and speech patterns from the transcript
+5. NEVER copy or adapt content from the sample structure - it's only for format reference
+6. If the transcript lacks sufficient content for analysis, clearly indicate this and set relevant fields to null
+7. Be exhaustive in grammar error detection - find EVERY error in the transcript
+8. Provide specific, actionable feedback based on actual user speech patterns
+9. Ensure all numerical values are accurate and based on transcript analysis
+10. Maintain consistency between scores, levels, and feedback across all sections
 
-ABSOLUTE FORBIDDEN ACTIONS:
-- DO NOT copy any words, sentences, or examples from the sample structure
-- DO NOT adapt or modify sample content for your response
-- DO NOT use sample grammar errors, pronunciation words, or feedback
-- DO NOT use sample scores, levels, or descriptions
-- DO NOT use any part of the sample data as a template
+DATA QUALITY STANDARDS:
+- If a section cannot be analyzed due to insufficient content, set it to null
+- For fluency: calculate actual words per minute, identify filler words, and assess speech flow
+- For vocabulary: count unique words, assess lexical diversity, and suggest improvements
+- For grammar: identify ALL errors with specific examples from the transcript
+- For discourse: analyze coherence and cohesion using actual conversation structure
 
-You must:
-- Output ONLY a valid JSON object (no markdown, no extra text)
-- Include ALL required fields, even if null
-- Use correct types (numbers, strings, objects, arrays)
-- Not omit or rename any fields
-- Not add any extra fields
-- Use user's actual words for examples/feedback
-- If a section is missing, set it to null (do not omit)
-- No explanations, disclaimers, or markdown
-- All numbers must be plain numbers (not strings with units)
-- All strings must be properly quoted
-- No trailing commas
-- Use proper JSON syntax for all values
-- For rates, use plain numbers (e.g., "rate": 5, not "rate": "5 per minute")
-- For percentages, use plain numbers (e.g., "percentage": 20, not "percentage": "20%")
-- For scores, use plain numbers (e.g., "score": 75, not "score": "75%")
-- If the transcript is too short, indicate this in your analysis
-- The output must be directly parsable as JSON
-- If you cannot fill a field, set it to null (do not omit)
-- DO NOT include any text before or after the JSON object
-- DO NOT use markdown code blocks
-- DO NOT analyze this structure, just fill it
-- DO NOT use any data except the transcript provided
-- DO NOT use general knowledge or previous conversations
-- DO NOT add any extra commentary
-- DO NOT change field names or structure
-- DO NOT add or remove any fields
-- DO NOT wrap the output in markdown
-- DO NOT output anything except the JSON object
-- If you break any of these rules, the system will fail
+OUTPUT REQUIREMENTS:
+- Return ONLY valid JSON matching the exact structure provided
+- Include ALL required fields - never omit fields, use null for missing data
+- Use correct data types: numbers for scores/percentages, strings for text, objects for complex data
+- Ensure all strings are properly quoted
+- No trailing commas or syntax errors
+- No markdown formatting or extra text
+- All emojis must be quoted strings (e.g., "👍", "🐢", "🚀")
+
+ERROR HANDLING:
+- If transcript is too short (< 30 words), indicate insufficient data and set fields to null
+- If specific analysis is not possible, provide null values with clear reasoning
+- Never fabricate data or use sample content as fallback
+- Always prioritize accuracy over completeness
+- If conversation lacks meaningful content, provide null values rather than generic analysis
+- Ensure all numerical scores are realistic and based on actual transcript analysis
 
 The structure to use is exactly as in the following example (all fields required, types must match):
 ${JSON.stringify(SAMPLE_REPORT, null, 2)}
 
-CRITICAL WARNING: The sample above is ONLY for showing the required JSON structure. DO NOT use any of its data, content, words, sentences, examples, or feedback. Analyze ONLY the transcript provided. Reference the user's actual words for examples and feedback. If a field cannot be filled, set it to null. If the transcript is too short, indicate this in your analysis.`
+CRITICAL WARNING: The sample above is ONLY for showing the required JSON structure. DO NOT use any of its data, content, words, sentences, examples, or feedback. Analyze ONLY the transcript provided. Reference the user's actual words for examples and feedback. If a field cannot be filled due to insufficient data, set it to null.`
                 },
                 {
                     role: "user",
-                    content: `CRITICAL INSTRUCTIONS: Analyze ONLY the conversation transcript I provide below. Do NOT use any other data, previous conversations, or general knowledge. Base your analysis EXCLUSIVELY on this specific conversation.
+                    content: `COMPREHENSIVE ANALYSIS REQUEST: Analyze the conversation transcript below with maximum detail and accuracy. Provide complete analysis of all language aspects or clearly indicate when data is insufficient.
 
-ABSOLUTE FORBIDDEN: The sample report structure I showed you is ONLY for the JSON format - DO NOT use any of its data, examples, content, words, sentences, or feedback. Use ONLY the transcript data below.
+CRITICAL INSTRUCTIONS:
+- Analyze ONLY the provided transcript - no external knowledge or assumptions
+- For grammar errors: Find EVERY error in the transcript, not just examples
+- For fluency: Calculate actual speaking pace, identify filler words, assess hesitations
+- For vocabulary: Count unique words, assess diversity, suggest improvements
+- For discourse: Analyze coherence and cohesion using actual conversation flow
+- If any section lacks sufficient data for meaningful analysis, set it to null
+- Use ONLY the user's actual words and sentences for examples and feedback
+- Provide specific, actionable insights based on real speech patterns
 
-CRITICAL WARNING: If you use any words, sentences, examples, or feedback from the sample structure, your response will be rejected and you will need to retry. Only use the actual transcript data provided below.
+TRANSCRIPT DATA FOR ANALYSIS:
+${JSON.stringify(transcriptData)}
 
-For the 'grammarErrors' field, you MUST return EVERY grammar error for EVERY sentence in the transcript, not just a sample. Be exhaustive and detailed. For each error, provide the category, the user's actual sentence, the correction, and a brief explanation. Do not skip any errors. For all other sections, provide the most detailed, specific, and actionable analysis possible, referencing the user's actual words and sentences. Do not summarize or generalize—be as granular as possible.
+ANALYSIS REQUIREMENTS:
+1. Fluency Assessment:
+   - Calculate actual words per minute from transcript
+   - Identify filler words and hesitations
+   - Assess speech flow and corrections
+   - Provide specific feedback on speaking pace
 
-Here is the transcript of my latest conversation: ${JSON.stringify(transcriptData)}
+2. Vocabulary Evaluation:
+   - Count unique words and assess lexical diversity
+   - Identify vocabulary level distribution
+   - Suggest word improvements based on actual usage
+   - Analyze idiomatic language usage
 
-*CRITICAL JSON RULES:*
+3. Grammar Analysis:
+   - Find EVERY grammar error in the transcript
+   - Categorize errors by type (articles, verb agreement, etc.)
+   - Provide specific corrections with actual sentences
+   - Assess sentence complexity and structure
+
+4. Discourse Analysis:
+   - Evaluate coherence and cohesion
+   - Analyze conversation flow and organization
+   - Assess use of connectors and transitions
+   - Provide feedback on overall communication effectiveness
+
+JSON OUTPUT RULES:
 - Output ONLY valid JSON - no text before or after
-- All numbers must be plain numbers (e.g., 5, not "5 per minute")
+- All numbers must be plain numbers (e.g., 75, not "75%")
 - All strings must be properly quoted
-- No trailing commas
+- No trailing commas or syntax errors
 - Use proper JSON syntax for all values
 - For rates, use plain numbers (e.g., "rate": 5, not "rate": "5 per minute")
 - For percentages, use plain numbers (e.g., "percentage": 20, not "percentage": "20%")
 - For scores, use plain numbers (e.g., "score": 75, not "score": "75%")
-- Use ONLY the provided transcript for analysis - nothing else
+- Use ONLY the provided transcript for analysis
 - Reference specific words, phrases, and sentences from the transcript
-- Do NOT include explanations, disclaimers, or markdown
-- Provide data in all required objects
-- Be specific and actionable in feedback
-- If the transcript is too short, indicate this in your analysis
-- Please analyze only the user's words and sentences from the transcript
-- Please make sure you give the example sentence or anything else use the user's actual words and sentences
-- Always give the data type and the structure as I said
-- Don't ever give any extra text or anything else just directly the JSON
-- Please when you give emoji give as string like this: "👍" or "🐢" or "🚀" . see here it wrapped with double quotes
-- For example and feedback and suggestion or anything where you need some word or sentence use the user's actual words and sentences from the transcript
-- Make the output personalized and specific to the user's words and sentences
-- DO NOT use any data from the sample structure - only use the transcript data above
-- NEVER copy sample words like "development", "project", "question", "involved"
-- NEVER copy sample sentences like "I have plan for it", "I will explain you the idea"
-- NEVER copy sample feedback like "Indian languages", "heavy accent", "practice sounds /r/ and /v/"
+- If insufficient data for analysis, set relevant fields to null
+- Provide comprehensive, detailed analysis where possible
+- Make feedback specific and actionable based on actual speech patterns
+- Use user's actual words and sentences for all examples and feedback
+- Ensure all emojis are quoted strings (e.g., "👍", "🐢", "🚀")
+- Make the output personalized and specific to the user's actual speech
+- DO NOT use any data from the sample structure - only use transcript data
+- NEVER copy sample words, sentences, or feedback - use only transcript content
 
-`
+QUALITY ASSURANCE:
+- Double-check all numerical calculations
+- Ensure consistency between scores and feedback
+- Verify all examples come from the actual transcript
+- Confirm all required fields are present in the output
+- Validate that feedback is specific and actionable
+- Ensure no sample content is used in the analysis
+- If transcript is too short or unclear, set relevant fields to null
+- Provide realistic scores based on actual conversation quality
+- Ensure all feedback is specific to the user's actual speech patterns`
                 }
             ],
-            temperature: 1,
-            max_tokens: 3048,
+            temperature: 0.7,
+            max_tokens: 4000,
         };
 
         const headers = {
@@ -430,7 +407,7 @@ Here is the transcript of my latest conversation: ${JSON.stringify(transcriptDat
 
         const aiResponse = await axios.post(url, payload, {
             headers,
-            timeout: 30000 // 30 second timeout for AI
+            timeout: 45000 // Increased timeout for more comprehensive analysis
         });
 
         const contentString = aiResponse?.data?.choices?.[0]?.message?.content;
@@ -469,15 +446,35 @@ Here is the transcript of my latest conversation: ${JSON.stringify(transcriptDat
 
         try {
             const parsedData = JSON.parse(jsonString);
+            
+                    // Validate that the AI provided meaningful data
+        const hasValidData = parsedData && typeof parsedData === 'object' && 
+            Object.values(parsedData).some(value => 
+                value !== null && value !== undefined && 
+                (typeof value === 'object' ? Object.values(value).some(v => v !== null && v !== undefined) : true)
+            );
+        
+        // Additional validation for meaningful analysis
+        const hasMeaningfulScores = parsedData && (
+            (parsedData.fluency && parsedData.fluency.fluencyScore !== null) ||
+            (parsedData.vocabulary && parsedData.vocabulary.vocabularyScore !== null) ||
+            (parsedData.grammar && parsedData.grammar.grammarScore !== null) ||
+            (parsedData.discourse && parsedData.discourse.discourseScore !== null)
+        );
+        
+        if (!hasValidData || !hasMeaningfulScores) {
+            throw new Error('insufficient conversation data');
+        }
+            
             return { success: true, data: parsedData };
         } catch (parseError) {
             console.error('Failed to parse AI response as JSON:', parseError, jsonString);
-            throw new Error('AI returned malformed data');
+            throw new Error('AI analysis failed');
         }
 
     } catch (error) {
         console.error("Groq API Error:", error);
-        return { success: false, error: error.message };
+        return { success: false, error: 'AI analysis failed' };
     }
 };
 
