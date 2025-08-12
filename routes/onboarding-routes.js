@@ -21,7 +21,6 @@ router.post('/onboarding', async (req, res) => {
       native_language,
       known_words_1,
       known_words_2,
-      work_scenarios,
       interests,
       english_style,
       tutor_style
@@ -59,10 +58,9 @@ console.log('Received onboarding data:', req.body);
           native_language = $11,
           known_words_1 = $12,
           known_words_2 = $13,
-          work_scenarios = $14,
-          interests = $15,
-          english_style = $16,
-          tutor_style = $17,
+          interests = $14,
+          english_style = $15,
+          tutor_style = $16,
           updated_at = CURRENT_TIMESTAMP
         WHERE fingerprint_id = $1
         RETURNING *
@@ -71,8 +69,8 @@ console.log('Received onboarding data:', req.body);
         industry, speaking_feelings, speaking_frequency,
         main_goal, gender, JSON.stringify(current_learning_methods),
         current_level, native_language, JSON.stringify(known_words_1),
-        JSON.stringify(known_words_2), JSON.stringify(work_scenarios),
-        JSON.stringify(interests), english_style, JSON.stringify(tutor_style)
+        JSON.stringify(known_words_2), JSON.stringify(interests),
+        english_style, JSON.stringify(tutor_style)
       ]);
     } else {
       // Insert new record
@@ -82,17 +80,17 @@ console.log('Received onboarding data:', req.body);
           industry, speaking_feelings, speaking_frequency,
           main_goal, gender, current_learning_methods,
           current_level, native_language, known_words_1, known_words_2,
-          work_scenarios, interests, english_style, tutor_style
+          interests, english_style, tutor_style
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
         ) RETURNING *
       `, [
         fingerprint_id, skill_to_improve, language_statement,
         industry, speaking_feelings, speaking_frequency,
         main_goal, gender, JSON.stringify(current_learning_methods),
         current_level, native_language, JSON.stringify(known_words_1),
-        JSON.stringify(known_words_2), JSON.stringify(work_scenarios),
-        JSON.stringify(interests), english_style, JSON.stringify(tutor_style)
+        JSON.stringify(known_words_2), JSON.stringify(interests),
+        english_style, JSON.stringify(tutor_style)
       ]);
     }
 

@@ -151,7 +151,6 @@ const initTables = async () => {
                 native_language VARCHAR(100),
                 known_words_1 JSONB DEFAULT '[]',
                 known_words_2 JSONB DEFAULT '[]',
-                work_scenarios JSONB DEFAULT '[]',
                 interests JSONB DEFAULT '[]',
                 english_style VARCHAR(50),
                 tutor_style JSONB DEFAULT '[]',

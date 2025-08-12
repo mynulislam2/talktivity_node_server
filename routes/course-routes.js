@@ -1639,7 +1639,7 @@ async function generatePersonalizedCourse(onboardingData, conversations, retryCo
       nativeLanguage: onboardingData.native_language,
       industry: onboardingData.industry,
       interests: onboardingData.interests,
-      workScenarios: onboardingData.work_scenarios,
+
       mainGoal: onboardingData.main_goal,
       speakingFeelings: onboardingData.speaking_feelings,
       speakingFrequency: onboardingData.speaking_frequency,
@@ -1752,7 +1752,7 @@ PERSONALIZATION FACTORS:
 - Native language: ${contextData.onboarding.nativeLanguage}
 - Industry: ${contextData.onboarding.industry}
 - Interests: ${contextData.onboarding.interests?.join(', ')}
-- Work scenarios: ${contextData.onboarding.workScenarios?.join(', ')}
+
 - Main goal: ${contextData.onboarding.mainGoal}
 
 ${strictJsonWarning}`
