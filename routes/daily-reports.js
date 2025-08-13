@@ -275,7 +275,7 @@ const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
         };
 
         const payload = {
-            model: "llama3-8b-8192",
+            model: "deepseek-r1-distill-llama-70b",
             messages: [
                 {
                     role: "system",
@@ -396,8 +396,8 @@ QUALITY ASSURANCE:
 - Ensure all feedback is specific to the user's actual speech patterns`
                 }
             ],
-            temperature: 0.7,
-            max_tokens: 4000,
+            temperature: 1,
+            max_tokens: 4096,
         };
 
         const headers = {
