@@ -109,10 +109,18 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
       console.error('Error auto-adding user to common group:', err.message);
     }
     
+    // Generate JWT token for the newly registered user
+    const token = jwt.sign(
+      { userId: result.rows[0].id, email: result.rows[0].email },
+      process.env.JWT_SECRET || 'your-default-secret-key',
+      { expiresIn: process.env.JWT_EXPIRE || '24h' }
+    );
+    
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
+        token,
         user: result.rows[0]
       }
     });
