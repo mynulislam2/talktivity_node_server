@@ -1856,9 +1856,18 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
     );
 
     const progressMap = {};
+    console.log('Timeline API - Progress data from database:');
     progressResult.rows.forEach(progress => {
-      progressMap[progress.date] = progress;
+      // Ensure date is in YYYY-MM-DD format for consistent mapping
+      const dateStr = progress.date instanceof Date 
+        ? progress.date.toISOString().split('T')[0]
+        : typeof progress.date === 'string' 
+          ? progress.date.split('T')[0] 
+          : progress.date;
+      progressMap[dateStr] = progress;
+      console.log(`  Original date: ${progress.date}, Mapped to: ${dateStr}`);
     });
+    console.log('Timeline API - Progress map keys:', Object.keys(progressMap));
 
     // Build timeline with all 84 days
     const timeline = [];
@@ -1875,30 +1884,45 @@ router.get('/courses/timeline', authenticateToken, async (req, res) => {
         const personalizedTopic = dayIndex < personalizedTopics.length ? personalizedTopics[dayIndex] : null;
         const progress = progressMap[dateStr] || null;
         
-        // Updated isCompleted logic to match frontend
+        // Debug logging for current day
+        if (week === currentWeek && day === currentDay) {
+          console.log(`Timeline API - Current day (Week ${week}, Day ${day}):`);
+          console.log(`  Generated dateStr: ${dateStr}`);
+          console.log(`  Progress found: ${progress ? 'YES' : 'NO'}`);
+          if (progress) {
+            console.log(`  Progress data:`, {
+              speaking_completed: progress.speaking_completed,
+              quiz_completed: progress.quiz_completed,
+              listening_completed: progress.listening_completed,
+              listening_quiz_completed: progress.listening_quiz_completed,
+              date: progress.date
+            });
+          }
+        }
+        
+        // Updated isCompleted logic to match streak calculation
         let isCompleted = false;
         if (progress) {
-          switch (dayType) {
-            case 'speaking_quiz':
-              isCompleted = progress.speaking_completed && progress.quiz_completed;
-              break;
-            case 'quiz_only':
-              isCompleted = progress.quiz_completed;
-              break;
-            case 'speaking_exam':
-              isCompleted = progress.speaking_completed;
-              break;
-            case 'listening_quiz':
-              isCompleted = progress.listening_completed && progress.listening_quiz_completed;
-              break;
-            case 'speaking_listening_quiz':
-              isCompleted = progress.speaking_completed && progress.listening_completed && progress.listening_quiz_completed;
-              break;
-            case 'all_activities':
-              isCompleted = progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed;
-              break;
-            default:
-              isCompleted = false;
+          // Use the same logic as streak calculation
+          if (day >= 1 && day <= 5) {
+            // Days 1-5: All activities must be completed
+            isCompleted = progress.speaking_completed && progress.quiz_completed && progress.listening_completed && progress.listening_quiz_completed;
+          } else if (day === 6) {
+            // Day 6: Only quiz needs to be completed
+            isCompleted = progress.quiz_completed;
+          } else if (day === 7) {
+            // Day 7: Only speaking needs to be completed
+            isCompleted = progress.speaking_completed;
+          }
+          
+          // Debug logging for current day
+          if (week === currentWeek && day === currentDay) {
+            console.log(`Timeline API - isCompleted calculation for Day ${day}:`);
+            console.log(`  speaking_completed: ${progress.speaking_completed}`);
+            console.log(`  quiz_completed: ${progress.quiz_completed}`);
+            console.log(`  listening_completed: ${progress.listening_completed}`);
+            console.log(`  listening_quiz_completed: ${progress.listening_quiz_completed}`);
+            console.log(`  Final isCompleted: ${isCompleted}`);
           }
         }
 
