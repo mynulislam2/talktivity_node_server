@@ -84,7 +84,7 @@ router.post('/google', async (req, res) => {
 
       res.json({
         success: true,
-        message: 'Login successful',
+        message: 'Login successful (existing user)',
         data: {
           token,
           user: {
@@ -105,6 +105,23 @@ router.post('/google', async (req, res) => {
       );
 
       const createdUser = newUser.rows[0];
+
+      // Auto-add user to the common group
+      try {
+        // Find the common group
+        const groupRes = await client.query('SELECT id FROM groups WHERE is_common = TRUE LIMIT 1');
+        if (groupRes.rows.length > 0) {
+          const commonGroupId = groupRes.rows[0].id;
+          await client.query(
+            'INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [commonGroupId, createdUser.id]
+          );
+        } else {
+          console.error('No common group found to auto-add user');
+        }
+      } catch (err) {
+        console.error('Error auto-adding user to common group:', err.message);
+      }
 
       // Generate JWT token
       const token = jwt.sign(

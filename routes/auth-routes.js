@@ -72,12 +72,49 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
     const userCheck = await client.query('SELECT * FROM users WHERE email = $1', [email]);
     
     if (userCheck?.rows?.length > 0) {
-      return res.status(409).json({
-        success: false,
-        error: 'Email already registered'
+      // User already exists - attempt to log them in
+      const existingUser = userCheck.rows[0];
+      
+      // Check if user has a password (not a Google OAuth user)
+      if (!existingUser.password) {
+        return res.status(400).json({
+          success: false,
+          error: 'This email is registered with Google. Please use Google login instead.'
+        });
+      }
+      
+      // Verify the provided password matches
+      const passwordMatch = await bcrypt.compare(password, existingUser.password);
+      
+      if (!passwordMatch) {
+        return res.status(401).json({
+          success: false,
+          error: 'Email already registered with a different password. Please use the correct password or try logging in instead.'
+        });
+      }
+      
+      // Password matches - log the user in
+      const token = jwt.sign(
+        { userId: existingUser.id, email: existingUser.email },
+        process.env.JWT_SECRET || 'your-default-secret-key',
+        { expiresIn: process.env.JWT_EXPIRE || '24h' }
+      );
+      
+      return res.json({
+        success: true,
+        message: 'Login successful (existing user)',
+        data: {
+          token,
+          user: {
+            id: existingUser.id,
+            email: existingUser.email,
+            full_name: existingUser.full_name
+          }
+        }
       });
     }
     
+    // User doesn't exist - proceed with registration
     // Hash the password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
