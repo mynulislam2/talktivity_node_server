@@ -13,8 +13,8 @@ const client = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI || 'postmessage' // Use 'postmessage' for web flow
 );
 
-// POST /auth/google - Handle Google OAuth
-router.post('/auth/google', async (req, res) => {
+// POST /google - Handle Google OAuth
+router.post('/google', async (req, res) => {
   let client;
   try {
     const { code } = req.body;
@@ -140,7 +140,7 @@ router.post('/auth/google', async (req, res) => {
 });
 
 // Refresh Google access token (optional, for future use)
-router.post('/google/refresh', async (req, res) => {
+router.post('/refresh', async (req, res) => {
   try {
     const { refreshToken } = req.body;
     
