@@ -4,63 +4,7 @@ const router = express.Router();
 const { pool } = require('../db/index'); // Import pool from db module instead of server.js
 const { authenticateToken } = require('./auth-routes');
 
-
-router.get('/devices/:deviceId/latest-conversations', async (req, res) => {
-  try {
-    const { deviceId } = req.params;
-    const { limit = 10, offset = 0 } = req.query;
-
-    // Validate deviceId (should be a string, not requiring numeric validation)
-    if (!deviceId || deviceId.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        error: 'Device ID is required and cannot be empty'
-      });
-    }
-
-    // Get all conversations for the device
-    const conversationsResult = await pool.query(`
-      SELECT id, room_name, device_id, timestamp, transcript 
-      FROM device_conversations 
-      WHERE device_id = $1
-      ORDER BY timestamp DESC
-      LIMIT $2 OFFSET $3
-    `, [deviceId, limit, offset]);
-        
-    // Count total conversations for this device
-    const countResult = await pool.query(`
-      SELECT COUNT(*) as total
-      FROM device_conversations
-      WHERE device_id = $1
-    `, [deviceId]);
-        
-    const total = parseInt(countResult.rows[0].total);
-
-    // Calculate pagination info
-    const paginationInfo = {
-      total,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      hasMore: total > (parseInt(offset) + parseInt(limit))
-    };
-
-    res.json({
-      success: true,
-      data: {
-        conversations: conversationsResult.rows,
-        pagination: paginationInfo
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET transcript by ID with all latest conversations (no limit)
-// Get latest conversations for a specific user
+// GET latest conversations for a specific user
 router.get('/users/:userId/latest-conversations', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -168,240 +112,82 @@ router.get('/users/:userId/conversations-by-month', async (req, res) => {
   }
 });
 
-// Add debugging middleware for all routes
-router.use((req, res, next) => {
-  next();
-});
-// GET latest transcript session
-router.get('/latest-transcript', async (req, res) => {
+// POST /api/conversations - Store conversation transcript
+router.post('/conversations', async (req, res) => {
+  let client;
   try {
-    const result = await pool.query(`
-      SELECT id, room_name, participant_identity, timestamp, transcript 
-      FROM conversations 
-      ORDER BY timestamp DESC
-      LIMIT 1
-    `);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No transcripts found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+    const { user_id, transcript, room_name, session_duration, agent_state } = req.body;
 
-// GET latest transcript for a specific room
-router.get('/latest-transcript/:room_name', async (req, res) => {
-  try {
-    const { room_name } = req.params;
-    
-    const result = await pool.query(`
-      SELECT id, room_name, participant_identity, timestamp, transcript 
-      FROM conversations 
-      WHERE room_name = $1
-      ORDER BY timestamp DESC
-      LIMIT 1
-    `, [room_name]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: `No transcripts found for room ${room_name}`
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET all transcripts
-router.get('/transcripts', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, room_name, participant_identity, timestamp, transcript 
-      FROM conversations 
-      ORDER BY timestamp DESC
-    `);
-    
-    res.json({
-      success: true,
-      data: result.rows
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET transcript by ID
-router.get('/transcripts/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const result = await pool.query(`
-      SELECT id, room_name, participant_identity, timestamp, transcript 
-      FROM conversations 
-      WHERE id = $1
-    `, [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Transcript not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// GET transcripts by room name
-router.get('/transcripts/room/:room_name', async (req, res) => {
-  try {
-    const { room_name } = req.params;
-    
-    const result = await pool.query(`
-      SELECT id, room_name, participant_identity, timestamp, transcript 
-      FROM conversations 
-      WHERE room_name = $1
-      ORDER BY timestamp DESC
-    `, [room_name]);
-    
-    res.json({
-      success: true,
-      data: result.rows
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// POST new transcript
-router.post('/transcripts', async (req, res) => {
-  try {
-    const { room_name, participant_identity, transcript } = req.body;
-    
-    if (!room_name || !transcript) {
+    if (!user_id || !transcript) {
       return res.status(400).json({
         success: false,
-        error: 'Room name and transcript are required'
+        error: 'user_id and transcript are required'
       });
     }
-    
-    const result = await pool.query(`
-      INSERT INTO conversations (room_name, participant_identity, transcript)
-      VALUES ($1, $2, $3)
-      RETURNING id, room_name, participant_identity, timestamp, transcript
-    `, [room_name, participant_identity, transcript]);
-    
+
+    client = await pool.connect();
+
+    const result = await client.query(`
+      INSERT INTO conversations (user_id, transcript, room_name, session_duration, agent_state, timestamp)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      RETURNING *
+    `, [user_id, transcript, room_name || null, session_duration || null, agent_state || null]);
+
     res.status(201).json({
       success: true,
-      message: 'Transcript saved successfully',
       data: result.rows[0]
     });
-    
+
   } catch (error) {
+    console.error('Error storing conversation:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to store conversation'
     });
+  } finally {
+    if (client) client.release();
   }
 });
 
-// DELETE transcript by ID
-router.delete('/transcripts/:id', async (req, res) => {
+// GET /api/users/:user_id/latest-conversations - Get latest conversations for a user
+router.get('/users/:user_id/latest-conversations', async (req, res) => {
+  let client;
   try {
-    const { id } = req.params;
-    
-    // Check if transcript exists
-    const checkResult = await pool.query(`
-      SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1)
-    `, [id]);
-    
-    if (!checkResult.rows[0].exists) {
-      return res.status(404).json({
+    const { user_id } = req.params;
+    const limit = parseInt(req.query.limit) || 5;
+
+    if (!user_id) {
+      return res.status(400).json({
         success: false,
-        error: 'Transcript not found'
+        error: 'user_id is required'
       });
     }
-    
-    // Delete the transcript
-    await pool.query(`
-      DELETE FROM conversations WHERE id = $1
-    `, [id]);
-    
+
+    client = await pool.connect();
+
+    const result = await client.query(`
+      SELECT * FROM conversations 
+      WHERE user_id = $1 
+      ORDER BY timestamp DESC 
+      LIMIT $2
+    `, [user_id, limit]);
+
     res.json({
       success: true,
-      message: 'Transcript deleted successfully'
+      data: {
+        conversations: result.rows
+      }
     });
+
   } catch (error) {
+    console.error('Error fetching conversations:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to fetch conversations'
     });
+  } finally {
+    if (client) client.release();
   }
 });
-router.delete('/transcripts/all', async (req, res) => {
-  try {
-    // Delete all transcripts belonging to the authenticated user
-    const result = await pool.query(`
-      DELETE FROM conversations 
-      WHERE user_id = $1
-      RETURNING id
-    `, [req.user.id]);
-    
-    const deletedCount = result.rowCount;
-    
-    if (deletedCount === 0) {
-      return res.json({
-        success: true,
-        message: 'No transcripts found to delete',
-        count: 0
-      });
-    }
-    
-    res.json({
-      success: true,
-      message: 'All transcripts deleted successfully',
-      count: deletedCount
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+
 module.exports = router;

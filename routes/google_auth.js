@@ -4,6 +4,7 @@ const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const router = express.Router();
+const axios = require('axios'); // Added axios for token exchange
 
 // Initialize Google OAuth client
 const client = new OAuth2Client(
@@ -12,12 +13,12 @@ const client = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI || 'postmessage' // Use 'postmessage' for web flow
 );
 
-// Google OAuth login route
-router.post('/google', async (req, res) => {
-  let dbClient;
+// POST /auth/google - Handle Google OAuth
+router.post('/auth/google', async (req, res) => {
+  let client;
   try {
-    const { code, fingerprint_id } = req.body;
-    
+    const { code } = req.body;
+
     if (!code) {
       return res.status(400).json({
         success: false,
@@ -25,130 +26,116 @@ router.post('/google', async (req, res) => {
       });
     }
 
-    console.log('Received Google auth code:', code.substring(0, 20) + '...');
-
     // Exchange authorization code for tokens
-    const { tokens } = await client.getToken(code);
-    console.log('Tokens received from Google');
+    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+      grant_type: 'authorization_code'
+    });
+
+    const { access_token } = tokenResponse.data;
 
     // Get user info from Google
-    const ticket = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: process.env.GOOGLE_CLIENT_ID,
+    const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: {
+        Authorization: `Bearer ${access_token}`
+      }
     });
 
-    const payload = ticket.getPayload();
-    const googleId = payload.sub;
-    const email = payload.email;
-    const name = payload.name;
-    const picture = payload.picture;
+    const { email, name, picture, id: googleId } = userInfoResponse.data;
 
-    console.log('Google user info:', { email, name, googleId });
+    client = await pool.connect();
 
-    // Connect to database
-    dbClient = await pool.connect();
-
-    // Check if user exists in database
-    console.log('🔍 Checking for existing user with email:', email);
-    let userQuery = await dbClient.query(
-      'SELECT * FROM users WHERE email = $1',
-      [email]
+    // Check if user already exists
+    let user = await client.query(
+      'SELECT * FROM users WHERE email = $1 OR google_id = $2',
+      [email, googleId]
     );
 
-    console.log('📊 Database query result:', {
-      rowCount: userQuery.rowCount,
-      rows: userQuery.rows.map(u => ({ id: u.id, email: u.email, google_id: u.google_id }))
-    });
-
-    let user;
-
-    if (userQuery.rows.length > 0) {
-      // User exists, update Google ID if not set
-      user = userQuery.rows[0];
-      console.log('✅ Found existing user:', { id: user.id, email: user.email, google_id: user.google_id });
+    if (user.rows.length > 0) {
+      // User exists, update Google ID if needed
+      user = user.rows[0];
       
-      if (!user.google_id) {
-        console.log('🔄 Updating Google ID for existing user');
-        await dbClient.query(
-          'UPDATE users SET google_id = $1, profile_picture = $2, updated_at = NOW() WHERE id = $3',
-          [googleId, picture, user.id]
+      if (!user.google_id && googleId) {
+        await client.query(
+          'UPDATE users SET google_id = $1, updated_at = NOW() WHERE id = $2',
+          [googleId, user.id]
         );
         user.google_id = googleId;
+      }
+
+      // Update profile picture if provided and different
+      if (picture && picture !== user.profile_picture) {
+        await client.query(
+          'UPDATE users SET profile_picture = $1, updated_at = NOW() WHERE id = $2',
+          [picture, user.id]
+        );
         user.profile_picture = picture;
       }
-      
-      // Update fingerprint_id if provided and different
-      if (fingerprint_id && fingerprint_id !== user.fingerprint_id) {
-        await dbClient.query(
-          'UPDATE users SET fingerprint_id = $1, updated_at = NOW() WHERE id = $2',
-          [fingerprint_id, user.id]
-        );
-        console.log(`Updated fingerprint_id for user ${user.id}: ${fingerprint_id}`);
-        user.fingerprint_id = fingerprint_id;
-      }
-      
-      console.log('✅ Existing user logged in:', user.id);
-    } else {
-      // User doesn't exist, create new user
-      console.log('🆕 Creating new user with email:', email);
-      const insertResult = await dbClient.query(
-        `INSERT INTO users (email, full_name, google_id, profile_picture, password, fingerprint_id) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
-         RETURNING id, email, full_name, google_id, profile_picture, fingerprint_id, created_at`,
-        [email, name, googleId, picture, '', fingerprint_id] // Empty password for Google users
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        process.env.JWT_SECRET || 'your-default-secret-key',
+        { expiresIn: process.env.JWT_EXPIRE || '24h' }
       );
-      
-      user = insertResult.rows[0];
-      console.log('🆕 New user created:', user.id);
-    }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email,
-        authProvider: 'google'
-      },
-      process.env.JWT_SECRET || 'your-default-secret-key',
-      { expiresIn: process.env.JWT_EXPIRE || '24h' }
-    );
-
-    // Return success response
-    res.json({
-      success: true,
-      message: 'Google authentication successful',
-              data: {
+      res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
           token,
           user: {
             id: user.id,
             email: user.email,
             full_name: user.full_name,
-            profile_picture: user.profile_picture,
-            google_id: user.google_id,
-            fingerprint_id: user.fingerprint_id,
-            authProvider: 'google'
+            profile_picture: user.profile_picture
           }
         }
-    });
+      });
+    } else {
+      // Create new user
+      const newUser = await client.query(
+        `INSERT INTO users (email, full_name, google_id, profile_picture, password)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, email, full_name, google_id, profile_picture, created_at`,
+        [email, name, googleId, picture, ''] // Empty password for Google users
+      );
 
-  } catch (error) {
-    console.error('Google authentication error:', error);
-    
-    // Handle specific Google API errors
-    if (error.code === 'invalid_grant') {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid or expired authorization code'
+      const createdUser = newUser.rows[0];
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: createdUser.id, email: createdUser.email },
+        process.env.JWT_SECRET || 'your-default-secret-key',
+        { expiresIn: process.env.JWT_EXPIRE || '24h' }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Account created successfully',
+        data: {
+          token,
+          user: {
+            id: createdUser.id,
+            email: createdUser.email,
+            full_name: createdUser.full_name,
+            profile_picture: createdUser.profile_picture
+          }
+        }
       });
     }
-    
+
+  } catch (error) {
+    console.error('Google auth error:', error);
     res.status(500).json({
       success: false,
-      error: 'Google authentication failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Authentication failed'
     });
   } finally {
-    if (dbClient) dbClient.release();
+    if (client) client.release();
   }
 });
 

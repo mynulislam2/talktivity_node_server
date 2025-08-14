@@ -76,45 +76,11 @@ router.post('/courses/initialize', authenticateToken, async (req, res) => {
     const endDate = new Date();
     endDate.setDate(endDate.getDate() + 84); // 12 weeks * 7 days = 84 days
 
-    // Get user's fingerprint_id to link with onboarding data
-    const userResult = await client.query(
-      'SELECT fingerprint_id FROM users WHERE id = $1',
+    // Get user's onboarding data directly by user ID
+    const onboardingResult = await client.query(
+      'SELECT * FROM onboarding_data WHERE user_id = $1',
       [userId]
     );
-    
-    const userFingerprint = userResult.rows[0]?.fingerprint_id;
-    
-    // Get all device IDs for the user
-    const deviceIdsResult = await client.query(
-      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
-      [userId]
-    );
-    const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
-    // Try current device ID (from users.fingerprint_id), recent, then all
-    let onboardingResult = { rows: [] };
-    if (userFingerprint) {
-      onboardingResult = await client.query(
-        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
-        [userFingerprint]
-      );
-    }
-    if ((!onboardingResult.rows || onboardingResult.rows.length === 0) && deviceIds.length > 0) {
-      // Try recent device ID (second most recent if available)
-      if (deviceIds.length > 1) {
-        const recentDeviceId = deviceIds[1];
-        onboardingResult = await client.query(
-          'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
-          [recentDeviceId]
-        );
-      }
-      // If still not found, try all device IDs
-      if ((!onboardingResult.rows || onboardingResult.rows.length === 0)) {
-        onboardingResult = await client.query(
-          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
-          [deviceIds]
-        );
-      }
-    }
     
     const conversationResult = await client.query(
       'SELECT transcript FROM conversations WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 5',
@@ -543,61 +509,57 @@ router.post('/courses/speaking/check-time', authenticateToken, async (req, res) 
   }
 });
 
-// Device-based speaking session endpoints (for unauthenticated users)
-// Start device speaking session
-router.post('/courses/device-speaking/start', async (req, res) => {
+// User-based speaking session endpoints (for authenticated users)
+// Start user speaking session
+router.post('/courses/user-speaking/start', authenticateToken, async (req, res) => {
   let client;
   try {
     client = await db.pool.connect();
-    const { deviceId } = req.body;
+    const userId = req.user.id;
     
-    if (!deviceId) {
-      return res.status(400).json({ success: false, error: 'Device ID required' });
-    }
-
     const today = new Date().toISOString().split('T')[0];
 
-    // Check lifetime limit (5 minutes total for device)
+    // Check lifetime limit (5 minutes total for user)
     const lifetimeResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
-      [deviceId]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1',
+      [userId]
     );
     const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
     
     if (lifetimeSeconds >= 5 * 60) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Lifetime speaking limit reached for this device',
+        error: 'Lifetime speaking limit reached for this user',
         data: { lifetimeLimitReached: true }
       });
     }
 
     // Check daily limit (5 minutes per day)
     const dailyResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
-      [deviceId, today]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1 AND date = $2',
+      [userId, today]
     );
     const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
     
     if (dailySeconds >= 5 * 60) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Daily speaking limit reached for this device',
+        error: 'Daily speaking limit reached for this user',
         data: { dailyLimitReached: true }
       });
     }
 
-    // Create a new device speaking session
+    // Create a new user speaking session
     const startTime = new Date();
     const sessionDate = startTime.toISOString().split('T')[0];
     await client.query(
-      `INSERT INTO device_speaking_sessions (device_id, date, start_time) VALUES ($1, $2, $3)`,
-      [deviceId, sessionDate, startTime]
+      `INSERT INTO device_speaking_sessions (user_id, date, start_time) VALUES ($1, $2, $3)`,
+      [userId, sessionDate, startTime]
     );
 
     res.json({
       success: true,
-      message: 'Device speaking session started',
+      message: 'User speaking session started',
       data: {
         startTime: new Date(),
         dailyTimeRemaining: 5 * 60 - dailySeconds,
@@ -605,34 +567,30 @@ router.post('/courses/device-speaking/start', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error starting device speaking session:', error);
-    res.status(500).json({ success: false, error: 'Failed to start device speaking session' });
+    console.error('Error starting user speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to start user speaking session' });
   } finally {
     if (client) client.release();
   }
 });
 
-// End device speaking session
-router.post('/courses/device-speaking/end', async (req, res) => {
+// End user speaking session
+router.post('/courses/user-speaking/end', authenticateToken, async (req, res) => {
   let client;
   try {
     client = await db.pool.connect();
-    const { deviceId } = req.body;
+    const userId = req.user.id;
     
-    if (!deviceId) {
-      return res.status(400).json({ success: false, error: 'Device ID required' });
-    }
-
     const today = new Date().toISOString().split('T')[0];
 
-    // Find the latest device speaking session for today that has no end_time
+    // Find the latest user speaking session for today that has no end_time
     const sessionResult = await client.query(
-      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
-      [deviceId, today]
+      'SELECT * FROM device_speaking_sessions WHERE user_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [userId, today]
     );
     
     if (sessionResult.rows.length === 0) {
-      return res.status(400).json({ success: false, error: 'No active device speaking session found' });
+      return res.status(400).json({ success: false, error: 'No active user speaking session found' });
     }
     
     const session = sessionResult.rows[0];
@@ -649,20 +607,20 @@ router.post('/courses/device-speaking/end', async (req, res) => {
 
     // Calculate totals
     const dailyResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
-      [deviceId, today]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1 AND date = $2',
+      [userId, today]
     );
     const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
 
     const lifetimeResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
-      [deviceId]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1',
+      [userId]
     );
     const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
 
     res.json({
       success: true,
-      message: 'Device speaking session ended',
+      message: 'User speaking session ended',
       data: {
         duration: durationSeconds,
         dailyTotal: dailySeconds,
@@ -672,30 +630,26 @@ router.post('/courses/device-speaking/end', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error ending device speaking session:', error);
-    res.status(500).json({ success: false, error: 'Failed to end device speaking session' });
+    console.error('Error ending user speaking session:', error);
+    res.status(500).json({ success: false, error: 'Failed to end user speaking session' });
   } finally {
     if (client) client.release();
   }
 });
 
-// Check device speaking time limit
-router.post('/courses/device-speaking/check-time', async (req, res) => {
+// Check user speaking time limit
+router.post('/courses/user-speaking/check-time', authenticateToken, async (req, res) => {
   let client;
   try {
     client = await db.pool.connect();
-    const { deviceId } = req.body;
+    const userId = req.user.id;
     
-    if (!deviceId) {
-      return res.status(400).json({ success: false, error: 'Device ID required' });
-    }
-
     const today = new Date().toISOString().split('T')[0];
 
     // Get current session
     const sessionResult = await client.query(
-      'SELECT * FROM device_speaking_sessions WHERE device_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
-      [deviceId, today]
+      'SELECT * FROM device_speaking_sessions WHERE user_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+      [userId, today]
     );
 
     if (sessionResult.rows.length === 0) {
@@ -735,40 +689,36 @@ router.post('/courses/device-speaking/check-time', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error checking device speaking time:', error);
+    console.error('Error checking user speaking time:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to check device speaking time'
+      error: 'Failed to check user speaking time'
     });
   } finally {
     if (client) client.release();
   }
 });
 
-// Get device speaking status
-router.post('/courses/device-speaking/status', async (req, res) => {
+// Get user speaking status
+router.post('/courses/user-speaking/status', authenticateToken, async (req, res) => {
   let client;
   try {
     client = await db.pool.connect();
-    const { deviceId } = req.body;
+    const userId = req.user.id;
     
-    if (!deviceId) {
-      return res.status(400).json({ success: false, error: 'Device ID required' });
-    }
-
     const today = new Date().toISOString().split('T')[0];
 
     // Get daily total
     const dailyResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1 AND date = $2',
-      [deviceId, today]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1 AND date = $2',
+      [userId, today]
     );
     const dailySeconds = parseInt(dailyResult.rows[0].total_seconds, 10);
 
     // Get lifetime total
     const lifetimeResult = await client.query(
-      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE device_id = $1',
-      [deviceId]
+      'SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM device_speaking_sessions WHERE user_id = $1',
+      [userId]
     );
     const lifetimeSeconds = parseInt(lifetimeResult.rows[0].total_seconds, 10);
 
@@ -785,10 +735,10 @@ router.post('/courses/device-speaking/status', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error getting device speaking status:', error);
+    console.error('Error getting user speaking status:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get device speaking status'
+      error: 'Failed to get user speaking status'
     });
   } finally {
     if (client) client.release();
@@ -1531,45 +1481,11 @@ router.post('/courses/generate-personalized', authenticateToken, async (req, res
     
     client = await db.pool.connect();
     
-    // Get user's fingerprint_id to link with onboarding data
-    const userResult = await client.query(
-      'SELECT fingerprint_id FROM users WHERE id = $1',
+    // Get user's onboarding data directly by user ID
+    const onboardingResult = await client.query(
+      'SELECT * FROM onboarding_data WHERE user_id = $1',
       [userId]
     );
-    
-    const userFingerprint = userResult.rows[0]?.fingerprint_id;
-    
-    // Get all device IDs for the user
-    const deviceIdsResult = await client.query(
-      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
-      [userId]
-    );
-    const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
-    // Try current device ID (from users.fingerprint_id), recent, then all
-    let onboardingResult = { rows: [] };
-    if (userFingerprint) {
-      onboardingResult = await client.query(
-        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
-        [userFingerprint]
-      );
-    }
-    if ((!onboardingResult.rows || onboardingResult.rows.length === 0) && deviceIds.length > 0) {
-      // Try recent device ID (second most recent if available)
-      if (deviceIds.length > 1) {
-        const recentDeviceId = deviceIds[1];
-        onboardingResult = await client.query(
-          'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
-          [recentDeviceId]
-        );
-      }
-      // If still not found, try all device IDs
-      if ((!onboardingResult.rows || onboardingResult.rows.length === 0)) {
-        onboardingResult = await client.query(
-          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
-          [deviceIds]
-        );
-      }
-    }
     
     if (onboardingResult.rows.length === 0) {
       return res.status(400).json({
@@ -1762,10 +1678,10 @@ ${strictJsonWarning}`
   ];
 
   const payload = {
-    model: 'llama3-8b-8192',
+    model: 'deepseek-r1-distill-llama-70b',
     messages: messages,
-    temperature: 0.7,
-    max_tokens: 4000
+    temperature: 1,
+    max_tokens: 40000
   };
 
   // Ensure we have the Groq API key
@@ -2649,39 +2565,12 @@ router.post('/courses/generate-next-batch', authenticateToken, async (req, res) 
     const currentCourse = currentCourseResult.rows[0];
     const nextBatchNumber = (currentCourse.batch_number || 1) + 1;
 
-    // Get user's fingerprint_id to link with onboarding data
-    const userResult = await client.query(
-      'SELECT fingerprint_id FROM users WHERE id = $1',
+    // Get user's onboarding data directly by user ID
+    const onboardingResult = await client.query(
+      'SELECT * FROM onboarding_data WHERE user_id = $1',
       [userId]
     );
     
-    const userFingerprint = userResult.rows[0]?.fingerprint_id;
-
-    // Get onboarding data using fingerprint_id
-    let onboardingResult = { rows: [] };
-    if (userFingerprint) {
-      onboardingResult = await client.query(
-        'SELECT * FROM onboarding_data WHERE fingerprint_id = $1',
-        [userFingerprint]
-      );
-    }
-
-    // If no onboarding data found with fingerprint_id, try device IDs
-    if (onboardingResult.rows.length === 0) {
-      const deviceIdsResult = await client.query(
-        'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY last_used DESC',
-        [userId]
-      );
-      const deviceIds = deviceIdsResult.rows.map(row => row.device_id);
-      
-      if (deviceIds.length > 0) {
-        onboardingResult = await client.query(
-          'SELECT * FROM onboarding_data WHERE fingerprint_id = ANY($1)',
-          [deviceIds]
-        );
-      }
-    }
-
     // Only proceed if onboarding data exists
     if (onboardingResult.rows.length === 0) {
       return res.status(400).json({

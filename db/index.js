@@ -104,16 +104,7 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
         `);
 
-        // User devices table for tracking all devices per user
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS user_devices (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                device_id VARCHAR(255) NOT NULL,
-                last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, device_id)
-            );
-        `);
+        // User devices table removed - all functionality now uses userId
 
         // Conversations table with indices
         await client.query(`
@@ -138,7 +129,7 @@ const initTables = async () => {
         await client.query(`
             CREATE TABLE IF NOT EXISTS onboarding_data (
                 id SERIAL PRIMARY KEY,
-                fingerprint_id VARCHAR(255) UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL,
                 skill_to_improve VARCHAR(100),
                 language_statement VARCHAR(10),
                 industry VARCHAR(100),
@@ -155,12 +146,13 @@ const initTables = async () => {
                 english_style VARCHAR(50),
                 tutor_style JSONB DEFAULT '[]',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
         `);
 
         await client.query(`
-            CREATE INDEX IF NOT EXISTS idx_onboarding_fingerprint ON onboarding_data(fingerprint_id);
+            CREATE INDEX IF NOT EXISTS idx_onboarding_user_id ON onboarding_data(user_id);
         `);
 
         // Optional: Create a sessions table for better session management
