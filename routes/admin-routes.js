@@ -20,9 +20,9 @@ router.get('/users', async (req, res) => {
       queryParams.push(`%${search}%`);
     }
     
-    // Get registered users with their stats
+    // Get registered users with their stats - Fixed to prevent duplicates
     const usersQuery = `
-      SELECT 
+      SELECT
         u.id,
         u.email,
         u.full_name,
@@ -32,9 +32,9 @@ router.get('/users', async (req, res) => {
         COALESCE(call_stats.completed_calls, 0) as completed_calls,
         COALESCE(last_activity.last_activity, u.created_at) as last_activity,
         CASE 
-          WHEN od.user_id IS NOT NULL AND c.user_id IS NOT NULL THEN 'Both'
-          WHEN od.user_id IS NOT NULL THEN 'Onboarded'
-          WHEN c.user_id IS NOT NULL THEN 'Active'
+          WHEN has_onboarding.has_onboarding = true AND call_stats.user_id IS NOT NULL THEN 'Both'
+          WHEN has_onboarding.has_onboarding = true THEN 'Onboarded'
+          WHEN call_stats.user_id IS NOT NULL THEN 'Active'
           ELSE 'Registered'
         END as status
       FROM users u
@@ -48,8 +48,11 @@ router.get('/users', async (req, res) => {
         FROM conversations
         GROUP BY user_id
       ) last_activity ON u.id = last_activity.user_id
-      LEFT JOIN onboarding_data od ON u.id = od.user_id
-      LEFT JOIN conversations c ON u.id = c.user_id
+      LEFT JOIN (
+        SELECT user_id, true as has_onboarding
+        FROM onboarding_data
+        GROUP BY user_id
+      ) has_onboarding ON u.id = has_onboarding.user_id
       WHERE 1=1 ${searchCondition}
       ORDER BY u.created_at DESC
       LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
@@ -101,14 +104,14 @@ router.delete('/users/:userId', async (req, res) => {
     
     // Try to find user by id
     let userCheck = await client.query(
-      'SELECT id FROM users WHERE id = $1',
+      'SELECT id, email FROM users WHERE id = $1',
       [userId]
     );
     
     // If not found by id, try to find by email
     if (userCheck.rows.length === 0) {
       userCheck = await client.query(
-        'SELECT id FROM users WHERE email = $1',
+        'SELECT id, email FROM users WHERE email = $1',
         [userId]
       );
     }
@@ -116,13 +119,48 @@ router.delete('/users/:userId', async (req, res) => {
     const isRegisteredUser = userCheck.rows.length > 0;
     
     if (isRegisteredUser) {
-      // Delete registered user and all related data
-      await client.query('DELETE FROM conversations WHERE user_id = $1', [userCheck.rows[0].id]);
-      await client.query('DELETE FROM onboarding_data WHERE user_id = $1', [userCheck.rows[0].id]);
-      await client.query('DELETE FROM user_courses WHERE user_id = $1', [userCheck.rows[0].id]);
-      await client.query('DELETE FROM device_conversations WHERE user_id = $1', [userCheck.rows[0].id]);
-      await client.query('DELETE FROM device_speaking_sessions WHERE user_id = $1', [userCheck.rows[0].id]);
-      await client.query('DELETE FROM users WHERE id = $1', [userCheck.rows[0].id]);
+      const userId = userCheck.rows[0].id;
+      console.log(`🗑️ Deleting user ID ${userId} and ALL related data...`);
+      
+      // Delete ALL user-related data from every table
+      // Group chat and messaging data
+      await client.query('DELETE FROM dm_messages WHERE sender_id = $1', [userId]);
+      await client.query('DELETE FROM dm_participants WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM group_messages WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM group_members WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM last_read_at WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM muted_groups WHERE user_id = $1', [userId]);
+      
+      // Learning and progress data
+      await client.query('DELETE FROM conversations WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM onboarding_data WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM user_courses WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM daily_progress WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM weekly_exams WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM speaking_sessions WHERE user_id = $1', [userId]);
+      
+      // Device and session data
+      await client.query('DELETE FROM device_conversations WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM device_speaking_sessions WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM user_sessions WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
+      
+      // Also clean up any device-based records that might be orphaned
+      // Get user's email to match with device records
+      const userEmail = userCheck.rows[0].email;
+      if (userEmail) {
+        // Delete device conversations that might be linked by email or other identifiers
+        await client.query('DELETE FROM device_conversations WHERE device_id ILIKE $1', [`%${userEmail}%`]);
+        await client.query('DELETE FROM device_speaking_sessions WHERE device_id ILIKE $1', [`%${userEmail}%`]);
+      }
+      
+      // OAuth and authentication data
+      await client.query('DELETE FROM user_oauth_providers WHERE user_id = $1', [userId]);
+      
+      // Finally delete the user
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+      
+      console.log(`✅ User ID ${userId} and ALL related data deleted successfully.`);
     } else {
       // User not found
       return res.status(404).json({ 
@@ -216,14 +254,14 @@ router.post('/users/bulk-delete', async (req, res) => {
     for (const userId of userIds) {
       // Try to find user by id
       let userCheck = await client.query(
-        'SELECT id FROM users WHERE id = $1',
+        'SELECT id, email FROM users WHERE id = $1',
         [userId]
       );
       
       // If not found by id, try to find by email
       if (userCheck.rows.length === 0) {
         userCheck = await client.query(
-          'SELECT id FROM users WHERE email = $1',
+          'SELECT id, email FROM users WHERE email = $1',
           [userId]
         );
       }
@@ -231,13 +269,48 @@ router.post('/users/bulk-delete', async (req, res) => {
       const isRegisteredUser = userCheck.rows.length > 0;
       
       if (isRegisteredUser) {
-        // Delete registered user and all related data
-        await client.query('DELETE FROM conversations WHERE user_id = $1', [userCheck.rows[0].id]);
-        await client.query('DELETE FROM onboarding_data WHERE user_id = $1', [userCheck.rows[0].id]);
-        await client.query('DELETE FROM user_courses WHERE user_id = $1', [userCheck.rows[0].id]);
-        await client.query('DELETE FROM device_conversations WHERE user_id = $1', [userCheck.rows[0].id]);
-        await client.query('DELETE FROM device_speaking_sessions WHERE user_id = $1', [userCheck.rows[0].id]);
-        await client.query('DELETE FROM users WHERE id = $1', [userCheck.rows[0].id]);
+        const userId = userCheck.rows[0].id;
+        console.log(`🗑️ Bulk deleting user ID ${userId} and ALL related data...`);
+        
+        // Delete ALL user-related data from every table
+        // Group chat and messaging data
+        await client.query('DELETE FROM dm_messages WHERE sender_id = $1', [userId]);
+        await client.query('DELETE FROM dm_participants WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM group_messages WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM group_members WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM last_read_at WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM muted_groups WHERE user_id = $1', [userId]);
+        
+        // Learning and progress data
+        await client.query('DELETE FROM conversations WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM onboarding_data WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_courses WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM daily_progress WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM weekly_exams WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM speaking_sessions WHERE user_id = $1', [userId]);
+        
+        // Device and session data
+        await client.query('DELETE FROM device_conversations WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM device_speaking_sessions WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_sessions WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
+        
+        // Also clean up any device-based records that might be orphaned
+        // Get user's email to match with device records
+        const userEmail = userCheck.rows[0].email;
+        if (userEmail) {
+          // Delete device conversations that might be linked by email or other identifiers
+          await client.query('DELETE FROM device_conversations WHERE device_id ILIKE $1', [`%${userEmail}%`]);
+          await client.query('DELETE FROM device_speaking_sessions WHERE device_id ILIKE $1', [`%${userEmail}%`]);
+        }
+        
+        // OAuth and authentication data
+        await client.query('DELETE FROM user_oauth_providers WHERE user_id = $1', [userId]);
+        
+        // Finally delete the user
+        await client.query('DELETE FROM users WHERE id = $1', [userId]);
+        
+        console.log(`✅ User ID ${userId} and ALL related data deleted successfully.`);
       } else {
         // User not found
         continue; // Skip if user not found
