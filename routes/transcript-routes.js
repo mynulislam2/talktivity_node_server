@@ -112,6 +112,44 @@ router.get('/users/:userId/conversations-by-month', async (req, res) => {
   }
 });
 
+// GET /api/conversations/user/:userId - Check if user has conversation experience
+router.get('/conversations/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Validate userId
+    if (isNaN(parseInt(userId))) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID must be a number'
+      });
+    }
+
+    // Check if user has any conversations
+    const result = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM conversations 
+      WHERE user_id = $1
+    `, [userId]);
+    
+    const hasConversations = parseInt(result.rows[0].count) > 0;
+
+    res.json({
+      success: true,
+      data: {
+        hasConversationExperience: hasConversations,
+        conversationCount: parseInt(result.rows[0].count)
+      }
+    });
+  } catch (error) {
+    console.error('Error checking conversation experience:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check conversation experience'
+    });
+  }
+});
+
 // POST /api/conversations - Store conversation transcript
 router.post('/conversations', async (req, res) => {
   let client;
