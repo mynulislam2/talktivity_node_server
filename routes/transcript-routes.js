@@ -193,6 +193,7 @@ router.get('/users/:user_id/latest-conversations', async (req, res) => {
   try {
     const { user_id } = req.params;
     const limit = parseInt(req.query.limit) || 5;
+    const isToday = req.query.isToday === 'true';
 
     if (!user_id) {
       return res.status(400).json({
@@ -203,12 +204,30 @@ router.get('/users/:user_id/latest-conversations', async (req, res) => {
 
     client = await pool.connect();
 
-    const result = await client.query(`
-      SELECT * FROM conversations 
-      WHERE user_id = $1 
-      ORDER BY timestamp DESC 
-      LIMIT $2
-    `, [user_id, limit]);
+    let query;
+    let params;
+
+    if (isToday) {
+      // When filtering for today, we need 3 parameters: user_id, limit, and the date condition
+      query = `
+        SELECT * FROM conversations 
+        WHERE user_id = $1 AND DATE(timestamp) = CURRENT_DATE
+        ORDER BY timestamp DESC 
+        LIMIT $2
+      `;
+      params = [user_id, limit];
+    } else {
+      // Original behavior - exactly the same as before
+      query = `
+        SELECT * FROM conversations 
+        WHERE user_id = $1 
+        ORDER BY timestamp DESC 
+        LIMIT $2
+      `;
+      params = [user_id, limit];
+    }
+
+    const result = await client.query(query, params);
 
     res.json({
       success: true,
