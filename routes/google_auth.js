@@ -471,15 +471,29 @@ router.post('/auto-verify-emails', async (req, res) => {
 router.post('/google', async (req, res) => {
   let client;
   try {
+    console.log('✅ Google OAuth request received');
+    
     const { code } = req.body;
 
     if (!code) {
+      console.warn('⚠️  Google OAuth: Missing authorization code');
       return res.status(400).json({
         success: false,
         error: 'Authorization code is required'
       });
     }
 
+    // Validate required environment variables
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REDIRECT_URI) {
+      console.error('❌ Google OAuth: Missing required environment variables');
+      return res.status(500).json({
+        success: false,
+        error: 'Google OAuth configuration error'
+      });
+    }
+
+    console.log('✅ Exchanging authorization code for tokens...');
+    
     // Exchange authorization code for tokens
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
       code,
@@ -491,6 +505,16 @@ router.post('/google', async (req, res) => {
 
     const { access_token } = tokenResponse.data;
 
+    if (!access_token) {
+      console.error('❌ Google OAuth: No access token received from Google');
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to obtain access token from Google'
+      });
+    }
+
+    console.log('✅ Getting user info from Google...');
+
     // Get user info from Google
     const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: {
@@ -500,6 +524,15 @@ router.post('/google', async (req, res) => {
 
     const { email, name, picture, id: googleId } = userInfoResponse.data;
 
+    if (!email) {
+      console.error('❌ Google OAuth: No email found in user info');
+      return res.status(400).json({
+        success: false,
+        error: 'Email not found in Google user info'
+      });
+    }
+
+    console.log('✅ Connecting to database...');
     client = await pool.connect();
 
     // Check if user already exists
@@ -509,6 +542,7 @@ router.post('/google', async (req, res) => {
     );
 
     if (user.rows.length > 0) {
+      console.log('✅ Existing user found, updating...');
       // User exists, update Google ID if needed
       user = user.rows[0];
       
@@ -555,6 +589,8 @@ router.post('/google', async (req, res) => {
       // Calculate expiry time in seconds
       const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
 
+      console.log('✅ Google OAuth login successful for existing user:', user.id);
+
       res.json({
         success: true,
         message: 'Login successful (existing user)',
@@ -572,6 +608,7 @@ router.post('/google', async (req, res) => {
         }
       });
     } else {
+      console.log('✅ Creating new user...');
       // Google user registration - always is_admin = false
       const isAdmin = false; // Google users are never admin
       
@@ -596,10 +633,11 @@ router.post('/google', async (req, res) => {
             [commonGroupId, createdUser.id]
           );
         } else {
-          console.error('No common group found to auto-add user');
+          console.warn('⚠️  No common group found to auto-add user');
         }
       } catch (err) {
-        console.error('Error adding user to common group:', err);
+        console.error('❌ Error adding user to common group:', err);
+        // Don't fail the registration if group addition fails
       }
 
       // Generate JWT token
@@ -618,6 +656,8 @@ router.post('/google', async (req, res) => {
 
       // Calculate expiry time in seconds
       const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
+
+      console.log('✅ Google OAuth registration successful for new user:', createdUser.id);
 
       res.status(201).json({
         success: true,
@@ -638,10 +678,29 @@ router.post('/google', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Google auth error:', error);
+    console.error('❌ Google OAuth error:', error);
+    
+    // Provide more specific error messages
+    if (error.response) {
+      console.error('❌ Google API error response:', error.response.data);
+      if (error.response.status === 400) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid authorization code. Please try logging in again.'
+        });
+      }
+    }
+    
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        success: false,
+        error: 'Unable to connect to Google services. Please try again later.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      error: 'Authentication failed'
+      error: 'Authentication failed. Please try again.'
     });
   } finally {
     if (client) client.release();

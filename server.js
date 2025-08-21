@@ -272,13 +272,53 @@ app.use((req, res, next) => {
 
 // Health check endpoint with DB connection status
 app.get('/health', async (req, res) => {
-  const dbConnected = await db.testConnection();
-  res.status(200).json({ 
-    status: 'OK', 
-    message: 'Server is up and running',
-    database: dbConnected ? 'connected' : 'disconnected',
-    timestamp: new Date()
-  });
+  try {
+    const dbConnected = await db.testConnection();
+    
+    // Check environment variables
+    const envStatus = {
+      JWT_SECRET: process.env.JWT_SECRET ? 'configured' : 'missing',
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? 'configured' : 'missing',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'missing',
+      GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI ? 'configured' : 'missing',
+      ADMIN_SETUP_TOKEN: process.env.ADMIN_SETUP_TOKEN ? 'configured' : 'missing',
+      ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ? 'configured' : 'missing'
+    };
+    
+    // Check database configuration
+    const dbConfig = {
+      host: process.env.PG_HOST ? 'configured' : 'missing',
+      port: process.env.PG_PORT ? 'configured' : 'missing',
+      database: process.env.PG_DATABASE ? 'configured' : 'missing',
+      user: process.env.PG_USER ? 'configured' : 'missing',
+      password: process.env.PG_PASSWORD ? 'configured' : 'missing'
+    };
+    
+    res.status(200).json({ 
+      status: 'OK', 
+      message: 'Server is up and running',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        connected: dbConnected,
+        config: dbConfig
+      },
+      environment_variables: envStatus,
+      uptime: process.uptime(),
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
+      }
+    });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      message: 'Health check failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 

@@ -342,13 +342,50 @@ router.post('/users/bulk-delete', authenticateToken, requireAdmin, async (req, r
 // GET /api/admin/verify-admin - Verify admin status (for frontend admin login)
 router.get('/verify-admin', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    res.json({
-      success: true,
-      isAdmin: true,
-      message: 'Admin access verified'
-    });
+    console.log('✅ Admin verification request received for user:', req.user.userId);
+    
+    // Additional database check to ensure user still exists and is admin
+    let client;
+    try {
+      client = await pool.connect();
+      
+      const { rows } = await client.query(
+        'SELECT id, email, is_admin FROM users WHERE id = $1 AND is_admin = true',
+        [req.user.userId]
+      );
+      
+      if (rows.length === 0) {
+        console.warn(`⚠️  Admin verification failed: User ${req.user.userId} not found or not admin`);
+        return res.status(403).json({
+          success: false,
+          error: 'Admin privileges not found'
+        });
+      }
+      
+      console.log('✅ Admin verification successful for user:', req.user.userId);
+      
+      res.json({
+        success: true,
+        isAdmin: true,
+        message: 'Admin access verified',
+        user: {
+          id: rows[0].id,
+          email: rows[0].email
+        }
+      });
+      
+    } catch (dbError) {
+      console.error('❌ Database error during admin verification:', dbError);
+      res.status(503).json({
+        success: false,
+        error: 'Database connection error. Please try again later.'
+      });
+    } finally {
+      if (client) client.release();
+    }
+    
   } catch (error) {
-    console.error('Error verifying admin status:', error);
+    console.error('❌ Error verifying admin status:', error);
     res.status(500).json({
       success: false,
       error: 'Unable to verify admin status at this time. Please try again later.'
