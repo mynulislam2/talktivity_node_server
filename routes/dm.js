@@ -8,6 +8,7 @@ router.get('/', authenticateToken, async (req, res) => {
   const userId = req.user?.userId;
   if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
   try {
+    console.log('✅ Fetching DMs for user:', userId);
     const { rows } = await pool.query(
       `SELECT
         dms.id,
@@ -33,8 +34,10 @@ router.get('/', authenticateToken, async (req, res) => {
       ORDER BY last_message_time DESC NULLS LAST`,
       [userId]
     );
+    console.log('✅ Successfully fetched DMs, count:', rows.length);
     res.json({ success: true, dms: rows });
   } catch (err) {
+    console.error('❌ Error fetching DMs:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve conversations at this time. Please try again later.' });
   }
 });

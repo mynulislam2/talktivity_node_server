@@ -209,7 +209,7 @@ app.use((req, res, next) => {
 // Rate limiting middleware
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 500 : 100, // More lenient in dev
+  max: process.env.NODE_ENV === 'development' ? 1000 : 200, // Increased limits
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.'
@@ -220,7 +220,7 @@ const globalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 50 : 50, // More lenient in dev
+  max: process.env.NODE_ENV === 'development' ? 100 : 50, // Increased limits
   message: {
     success: false,
     error: 'Too many authentication attempts, please try again later.'
@@ -232,10 +232,22 @@ const authLimiter = rateLimit({
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 100 : 20, // More lenient in dev
+  max: process.env.NODE_ENV === 'development' ? 200 : 50, // Increased limits
   message: {
     success: false,
     error: 'Too many admin requests, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful requests
+});
+
+const groupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'development' ? 500 : 200, // Higher limits for group operations
+  message: {
+    success: false,
+    error: 'Too many group requests, please try again later.'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -330,7 +342,8 @@ app.use('/api', topicRoutes);
 app.use('/api', courseRoutes);
 app.use('/api/daily-reports', dailyReportsRoutes);
 app.use('/api/admin', adminLimiter, adminRoutes);
-app.use('/api/groups', groupChatRoutes);
+app.use('/api/groups', groupLimiter, groupChatRoutes);
+app.use('/api/group-chat', groupLimiter, groupChatRoutes); // Add this line to support both /groups and /group-chat endpoints
 app.use('/api/dms', dmRoutes);
 
 // 404 handler

@@ -26,10 +26,12 @@ router.get('/', authenticateToken, async (req, res) => {
   }
   query += ' ORDER BY is_featured DESC, is_trending DESC, name ASC';
   try {
+    console.log('✅ Fetching groups for user:', req.user.userId);
     const { rows } = await pool.query(query, params);
+    console.log('✅ Successfully fetched groups, count:', rows.length);
     res.json({ success: true, groups: rows });
   } catch (err) {
-    console.error('Error fetching groups:', err);
+    console.error('❌ Error fetching groups:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve groups at this time. Please try again later.' });
   }
 });
@@ -92,13 +94,15 @@ router.post('/:groupId/leave', authenticateToken, async (req, res) => {
 router.get('/:groupId/members', authenticateToken, async (req, res) => {
   const groupId = req.params.groupId;
   try {
+    console.log('✅ Fetching members for group:', groupId, 'by user:', req.user.userId);
     const { rows } = await pool.query(
       'SELECT u.id, u.full_name, u.profile_picture FROM group_members gm JOIN users u ON gm.user_id = u.id WHERE gm.group_id = $1',
       [groupId]
     );
+    console.log('✅ Successfully fetched group members, count:', rows.length);
     res.json({ success: true, members: rows });
   } catch (err) {
-    console.error('Error fetching group members:', err);
+    console.error('❌ Error fetching group members:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve group members at this time. Please try again later.' });
   }
 });
@@ -192,13 +196,15 @@ router.get('/last-read', authenticateToken, async (req, res) => {
   const userId = req.user?.userId;
   if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
   try {
+    console.log('✅ Fetching last read status for user:', userId);
     const { rows } = await pool.query(
       'SELECT group_id, last_read_at FROM last_read_at WHERE user_id = $1 AND group_id IS NOT NULL',
       [userId]
     );
+    console.log('✅ Successfully fetched last read status, count:', rows.length);
     res.json({ success: true, lastRead: rows });
   } catch (err) {
-    console.error('Error fetching last read status:', err);
+    console.error('❌ Error fetching last read status:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve read status at this time. Please try again later.' });
   }
 });
