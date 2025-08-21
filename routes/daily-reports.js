@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { getDailyReport, saveDailyReport } = require('../db');
 const axios = require('axios');
+const { authenticateToken } = require('./auth-routes');
 
 // Get or generate daily report for a user
-router.get('/:userId/:date', async (req, res) => {
+router.get('/:userId/:date', authenticateToken, async (req, res) => {
     try {
         const { userId, date } = req.params;
         
@@ -45,14 +46,13 @@ router.get('/:userId/:date', async (req, res) => {
         console.error('❌ Error getting daily report:', error);
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message
+            error: 'Unable to retrieve daily report at this time. Please try again later.'
         });
     }
 });
 
 // Generate and save daily report
-router.post('/generate', async (req, res) => {
+router.post('/generate', authenticateToken, async (req, res) => {
     try {
         const { userId, date, transcriptData } = req.body;
         
@@ -112,8 +112,7 @@ router.post('/generate', async (req, res) => {
         console.error('❌ Error generating daily report:', error);
         res.status(500).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message
+            error: 'Unable to generate daily report at this time. Please try again later.'
         });
     }
 });

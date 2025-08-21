@@ -5,28 +5,112 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const listeningTopics = require('../listening-topics');
 
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+// Validate JWT_SECRET environment variable
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required but not set. Please set JWT_SECRET in your environment variables.');
+}
 
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Access token required' });
-  }
+// Validate JWT_SECRET strength and security
+const jwtSecret = process.env.JWT_SECRET;
+if (jwtSecret.length < 32) {
+  throw new Error('JWT_SECRET must be at least 32 characters long for security. Current length: ' + jwtSecret.length);
+}
 
-  jwt.verify(token, process.env.JWT_SECRET || 'your-default-secret-key', (err, user) => {
-    if (err) {
-      console.error('JWT verification error:', err);
-      return res.status(403).json({ success: false, error: 'Invalid or expired token' });
+// Check if JWT_SECRET is not a common weak value
+const weakSecrets = [
+  'your-default-secret-key',
+  'secret',
+  'password',
+  '123456',
+  'admin',
+  'test',
+  'dev',
+  'development',
+  'production',
+  'jwt-secret',
+  'my-secret',
+  'default-secret'
+];
+
+if (weakSecrets.includes(jwtSecret.toLowerCase())) {
+  throw new Error('JWT_SECRET cannot be a common weak value. Please use a strong, randomly generated secret.');
+}
+
+// Check if JWT_SECRET contains only basic characters (indicates it might be weak)
+if (/^[a-zA-Z0-9]+$/.test(jwtSecret) && jwtSecret.length < 64) {
+  console.warn('⚠️  Warning: JWT_SECRET appears to be weak. Consider using a longer, more complex secret for production.');
+}
+
+console.log('✅ JWT_SECRET validation passed - using secure secret');
+
+// Enhanced middleware to verify JWT token with database verification
+const authenticateToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      console.warn(`⚠️  HTTP request rejected: No authentication token from ${req.ip || req.connection.remoteAddress}`);
+      return res.status(401).json({ success: false, error: 'Access token required' });
+    }
+
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Additional security checks
+    if (!decoded.userId || !decoded.email) {
+      console.warn(`⚠️  HTTP request rejected: Invalid token payload from ${req.ip || req.connection.remoteAddress}`);
+      return res.status(403).json({ success: false, error: 'Invalid token payload' });
     }
     
-    // Map userId to id for consistency
-    req.user = {
-      id: user.userId,
-      email: user.email
-    };
-    next();
-  });
+    // Check if user exists in database (enhanced security)
+    let client;
+    try {
+      client = await db.pool.connect();
+      const { rows } = await client.query('SELECT id, email, is_email_verified, is_admin FROM users WHERE id = $1', [decoded.userId]);
+      
+      if (rows.length === 0) {
+        console.warn(`⚠️  HTTP request rejected: User not found in database from ${req.ip || req.connection.remoteAddress}`);
+        return res.status(403).json({ success: false, error: 'User not found' });
+      }
+      
+      // Check if email is verified (enhanced security)
+      if (!rows[0].is_email_verified) {
+        console.warn(`⚠️  HTTP request rejected: Email not verified from ${req.ip || req.connection.remoteAddress}`);
+        return res.status(403).json({ success: false, error: 'Email not verified' });
+      }
+      
+      // Map userId to id for consistency
+      req.user = {
+        id: decoded.userId,
+        email: decoded.email,
+        isEmailVerified: rows[0].is_email_verified,
+        isAdmin: rows[0].is_admin || false
+      };
+      
+      // Add request metadata for audit purposes
+      req.requestMetadata = {
+        timestamp: new Date(),
+        ipAddress: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        method: req.method,
+        path: req.path
+      };
+      
+      console.log(`✅ HTTP authenticated: User ${decoded.userId} (${decoded.email}) from ${req.ip || req.connection.remoteAddress} - ${req.method} ${req.path}`);
+      next();
+      
+    } catch (dbError) {
+      console.error('Database error during HTTP authentication:', dbError);
+      return res.status(503).json({ success: false, error: 'Authentication service unavailable' });
+    } finally {
+      if (client) client.release();
+    }
+    
+  } catch (error) {
+    console.warn(`⚠️  HTTP authentication failed from ${req.ip || req.connection.remoteAddress}:`, error.message);
+    return res.status(403).json({ success: false, error: 'Invalid or expired token' });
+  }
 };
 
 // Initialize course for a new user (3 months = 12 weeks)
@@ -1204,7 +1288,7 @@ router.get('/courses/speaking/sessions-by-month', authenticateToken, async (req,
     console.error('Error fetching speaking sessions by month:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Unable to retrieve speaking sessions at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -1266,7 +1350,7 @@ router.get('/courses/results-by-month', authenticateToken, async (req, res) => {
     console.error('Error fetching results by month:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Unable to retrieve results at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -1466,7 +1550,7 @@ router.get('/reports/monthly', authenticateToken, async (req, res) => {
     console.error('Error generating monthly report:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Unable to generate monthly report at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -1534,7 +1618,7 @@ router.post('/courses/generate-personalized', authenticateToken, async (req, res
     console.error('Error generating personalized course:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to generate personalized course'
+      error: 'Unable to generate personalized course at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();

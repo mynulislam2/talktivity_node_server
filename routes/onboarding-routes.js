@@ -177,7 +177,7 @@ router.post('/onboarding', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      
     });
   } finally {
     if (client) {
@@ -187,8 +187,8 @@ router.post('/onboarding', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/onboarding/test - Test endpoint without authentication
-router.post('/onboarding/test', async (req, res) => {
+// POST /api/onboarding/test - Test endpoint with authentication
+router.post('/onboarding/test', authenticateToken, async (req, res) => {
   let client;
   try {
     console.log('Test onboarding request received:', {
@@ -342,7 +342,7 @@ router.post('/onboarding/test', async (req, res) => {
     res.status(500).json({
       success: false,
       error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      
     });
   } finally {
     if (client) {

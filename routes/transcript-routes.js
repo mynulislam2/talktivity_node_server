@@ -5,7 +5,7 @@ const { pool } = require('../db/index'); // Import pool from db module instead o
 const { authenticateToken } = require('./auth-routes');
 
 // GET latest conversations for a specific user
-router.get('/users/:userId/latest-conversations', async (req, res) => {
+router.get('/users/:userId/latest-conversations', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { limit = 10, offset = 0 } = req.query;
@@ -52,15 +52,16 @@ router.get('/users/:userId/latest-conversations', async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching latest conversations:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Unable to retrieve conversations at this time. Please try again later.'
     });
   }
 });
 
 // GET all conversations for a user in a specific month and year
-router.get('/users/:userId/conversations-by-month', async (req, res) => {
+router.get('/users/:userId/conversations-by-month', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { month, year } = req.query;
@@ -105,15 +106,16 @@ router.get('/users/:userId/conversations-by-month', async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching conversations by month:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Unable to retrieve conversations at this time. Please try again later.'
     });
   }
 });
 
 // GET /api/conversations/user/:userId - Check if user has conversation experience
-router.get('/conversations/user/:userId', async (req, res) => {
+router.get('/conversations/user/:userId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -145,13 +147,13 @@ router.get('/conversations/user/:userId', async (req, res) => {
     console.error('Error checking conversation experience:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to check conversation experience'
+      error: 'Unable to check conversation experience at this time. Please try again later.'
     });
   }
 });
 
 // POST /api/conversations - Store conversation transcript
-router.post('/conversations', async (req, res) => {
+router.post('/conversations', authenticateToken, async (req, res) => {
   let client;
   try {
     const { user_id, transcript, room_name, session_duration, agent_state } = req.body;
@@ -180,7 +182,7 @@ router.post('/conversations', async (req, res) => {
     console.error('Error storing conversation:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to store conversation'
+      error: 'Unable to store conversation at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -188,7 +190,7 @@ router.post('/conversations', async (req, res) => {
 });
 
 // GET /api/users/:user_id/latest-conversations - Get latest conversations for a user
-router.get('/users/:user_id/latest-conversations', async (req, res) => {
+router.get('/users/:user_id/latest-conversations', authenticateToken, async (req, res) => {
   let client;
   try {
     const { user_id } = req.params;
@@ -240,7 +242,7 @@ router.get('/users/:user_id/latest-conversations', async (req, res) => {
     console.error('Error fetching conversations:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch conversations'
+      error: 'Unable to retrieve conversations at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();

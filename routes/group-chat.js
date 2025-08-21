@@ -4,7 +4,7 @@ const { pool } = require('../db');
 const { authenticateToken } = require('./auth-routes');
 
 // List all groups (with search/filter)
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   const { search, category, featured, trending } = req.query;
   let query = 'SELECT * FROM groups WHERE 1=1';
   const params = [];
@@ -29,7 +29,8 @@ router.get('/', async (req, res) => {
     const { rows } = await pool.query(query, params);
     res.json({ success: true, groups: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error fetching groups:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve groups at this time. Please try again later.' });
   }
 });
 
@@ -49,7 +50,7 @@ router.post('/create', authenticateToken, async (req, res) => {
     res.status(201).json({ success: true, group: result.rows[0] });
   } catch (err) {
     console.error('Error creating group:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to create group at this time. Please try again later.' });
   }
 });
 
@@ -65,7 +66,8 @@ router.post('/:groupId/join', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, message: 'Joined group' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error joining group:', err);
+    res.status(500).json({ success: false, error: 'Unable to join group at this time. Please try again later.' });
   }
 });
 
@@ -81,7 +83,8 @@ router.post('/:groupId/leave', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, message: 'Left group' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error leaving group:', err);
+    res.status(500).json({ success: false, error: 'Unable to leave group at this time. Please try again later.' });
   }
 });
 
@@ -95,7 +98,8 @@ router.get('/:groupId/members', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, members: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error fetching group members:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve group members at this time. Please try again later.' });
   }
 });
 
@@ -111,7 +115,8 @@ router.get('/:groupId/messages', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, messages: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error fetching group messages:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve messages at this time. Please try again later.' });
   }
 });
 
@@ -134,7 +139,8 @@ router.post('/:groupId/messages/:messageId/pin', authenticateToken, async (req, 
     );
     res.json({ success: true, message: 'Message pinned' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error pinning group message:', err);
+    res.status(500).json({ success: false, error: 'Unable to pin message at this time. Please try again later.' });
   }
 });
 
@@ -150,7 +156,8 @@ router.post('/:groupId/messages/unpin', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, message: 'All messages unpinned' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error unpinning group message:', err);
+    res.status(500).json({ success: false, error: 'Unable to unpin message at this time. Please try again later.' });
   }
 });
 
@@ -175,7 +182,8 @@ router.post('/:groupId/mute', authenticateToken, async (req, res) => {
       res.json({ success: true, message: 'Group unmuted' });
     }
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error muting group:', err);
+    res.status(500).json({ success: false, error: 'Unable to mute group at this time. Please try again later.' });
   }
 });
 
@@ -190,7 +198,8 @@ router.get('/last-read', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, lastRead: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error fetching last read status:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve read status at this time. Please try again later.' });
   }
 });
 
@@ -213,7 +222,7 @@ router.delete('/groups/:groupId', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'Group deleted successfully' });
   } catch (err) {
     console.error('Error deleting group:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to delete group at this time. Please try again later.' });
   }
 });
 

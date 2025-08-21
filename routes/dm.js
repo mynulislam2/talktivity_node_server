@@ -35,7 +35,7 @@ router.get('/', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, dms: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Unable to retrieve conversations at this time. Please try again later.' });
   }
 });
 
@@ -63,7 +63,8 @@ router.post('/start', authenticateToken, async (req, res) => {
     }
     res.json({ success: true, dmId });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error creating DM conversation:', err);
+    res.status(500).json({ success: false, error: 'Unable to create conversation at this time. Please try again later.' });
   }
 });
 
@@ -88,7 +89,8 @@ router.get('/:dmId/messages', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, messages: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error fetching DM messages:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve messages at this time. Please try again later.' });
   }
 });
 
@@ -113,7 +115,8 @@ router.post('/:dmId/read', authenticateToken, async (req, res) => {
     );
     res.json({ success: true, message: 'Marked as read' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error marking DM as read:', err);
+    res.status(500).json({ success: false, error: 'Unable to mark conversation as read at this time. Please try again later.' });
   }
 });
 
@@ -130,7 +133,8 @@ router.post('/:dmId/messages/:messageId/pin', authenticateToken, async (req, res
     await pool.query('UPDATE dm_messages SET pinned = TRUE WHERE id = $1 AND dm_id = $2', [messageId, dmId]);
     res.json({ success: true, message: 'Message pinned' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error pinning DM message:', err);
+    res.status(500).json({ success: false, error: 'Unable to pin message at this time. Please try again later.' });
   }
 });
 
@@ -143,7 +147,8 @@ router.post('/:dmId/messages/unpin', authenticateToken, async (req, res) => {
     await pool.query('UPDATE dm_messages SET pinned = FALSE WHERE dm_id = $1', [dmId]);
     res.json({ success: true, message: 'All messages unpinned' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Error unpinning DM message:', err);
+    res.status(500).json({ success: false, error: 'Unable to unpin message at this time. Please try again later.' });
   }
 });
 

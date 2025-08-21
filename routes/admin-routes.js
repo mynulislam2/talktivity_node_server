@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db/index');
+const { authenticateToken, requireAdmin } = require('./auth-routes');
 
 // GET /api/admin/users - Get all users with search and pagination
-router.get('/users', async (req, res) => {
+router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   let client;
   try {
     const { search, page = 1, limit = 20 } = req.query;
@@ -85,8 +86,8 @@ router.get('/users', async (req, res) => {
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ 
-      error: 'Failed to fetch users',
-      details: error.message 
+      success: false,
+      error: 'Unable to retrieve user list at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -94,7 +95,7 @@ router.get('/users', async (req, res) => {
 });
 
 // DELETE /api/admin/users/:userId - Delete user and all related data
-router.delete('/users/:userId', async (req, res) => {
+router.delete('/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
   let client;
   try {
     const { userId } = req.params;
@@ -179,8 +180,8 @@ router.delete('/users/:userId', async (req, res) => {
     if (client) await client.query('ROLLBACK');
     console.error('Error deleting user:', error);
     res.status(500).json({ 
-      error: 'Failed to delete user',
-      details: error.message 
+      success: false,
+      error: 'Unable to delete user at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -188,7 +189,7 @@ router.delete('/users/:userId', async (req, res) => {
 });
 
 // GET /api/admin/stats - Get user statistics
-router.get('/stats', async (req, res) => {
+router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
   let client;
   try {
     client = await pool.connect();
@@ -228,8 +229,8 @@ router.get('/stats', async (req, res) => {
   } catch (error) {
     console.error('Error fetching admin stats:', error);
     res.status(500).json({ 
-      error: 'Failed to fetch statistics',
-      details: error.message 
+      success: false,
+      error: 'Unable to retrieve statistics at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
@@ -237,7 +238,7 @@ router.get('/stats', async (req, res) => {
 });
 
 // POST /api/admin/users/bulk-delete - Bulk delete users
-router.post('/users/bulk-delete', async (req, res) => {
+router.post('/users/bulk-delete', authenticateToken, requireAdmin, async (req, res) => {
   let client;
   try {
     const { userIds } = req.body;
@@ -330,11 +331,66 @@ router.post('/users/bulk-delete', async (req, res) => {
     if (client) await client.query('ROLLBACK');
     console.error('Error bulk deleting users:', error);
     res.status(500).json({ 
-      error: 'Failed to delete users',
-      details: error.message 
+      success: false,
+      error: 'Unable to delete users at this time. Please try again later.'
     });
   } finally {
     if (client) client.release();
+  }
+});
+
+// GET /api/admin/verify-admin - Verify admin status (for frontend admin login)
+router.get('/verify-admin', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      isAdmin: true,
+      message: 'Admin access verified'
+    });
+  } catch (error) {
+    console.error('Error verifying admin status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Unable to verify admin status at this time. Please try again later.'
+    });
+  }
+});
+
+// GET /api/admin/check-admin-status - Check if current user is admin (for regular user session)
+router.get('/check-admin-status', authenticateToken, async (req, res) => {
+  try {
+    let client;
+    try {
+      client = await pool.connect();
+      
+      // Check if user has admin privileges
+      const { rows } = await client.query(
+        'SELECT is_admin FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      
+      if (rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+      
+      res.json({
+        success: true,
+        isAdmin: rows[0].is_admin || false
+      });
+      
+    } finally {
+      if (client) client.release();
+    }
+    
+  } catch (error) {
+    console.error('Error checking admin status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Unable to check admin status at this time. Please try again later.'
+    });
   }
 });
 

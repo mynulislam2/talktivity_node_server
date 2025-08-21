@@ -5,29 +5,130 @@ const jwt = require('jsonwebtoken');
 const router = express.Router();
 const { pool } = require('../db/index'); // Import pool from db module instead of server.js
 
-// Middleware to authenticate JWT token
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: 'Authentication token required'
-    });
-  }
-  
-  jwt.verify(token, process.env.JWT_SECRET || 'your-default-secret-key', (err, user) => {
-    if (err) {
-      return res.status(403).json({
+// Validate JWT_SECRET environment variable
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required but not set. Please set JWT_SECRET in your environment variables.');
+}
+
+// Validate JWT_SECRET strength and security
+const jwtSecret = process.env.JWT_SECRET;
+if (jwtSecret.length < 32) {
+  throw new Error('JWT_SECRET must be at least 32 characters long for security. Current length: ' + jwtSecret.length);
+}
+
+// Check if JWT_SECRET is not a common weak value
+const weakSecrets = [
+  'your-default-secret-key',
+  'secret',
+  'password',
+  '123456',
+  'admin',
+  'test',
+  'dev',
+  'development',
+  'production',
+  'jwt-secret',
+  'my-secret',
+  'default-secret'
+];
+
+if (weakSecrets.includes(jwtSecret.toLowerCase())) {
+  throw new Error('JWT_SECRET cannot be a common weak value. Please use a strong, randomly generated secret.');
+}
+
+// Check if JWT_SECRET contains only basic characters (indicates it might be weak)
+if (/^[a-zA-Z0-9]+$/.test(jwtSecret) && jwtSecret.length < 64) {
+  console.warn('⚠️  Warning: JWT_SECRET appears to be weak. Consider using a longer, more complex secret for production.');
+}
+
+console.log('✅ JWT_SECRET validation passed - using secure secret');
+
+// Enhanced middleware to authenticate JWT token with database verification
+async function authenticateToken(req, res, next) {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      console.warn(`⚠️  HTTP request rejected: No authentication token from ${req.ip || req.connection.remoteAddress}`);
+      return res.status(401).json({
         success: false,
-        error: 'Invalid or expired token'
+        error: 'Authentication token required'
       });
     }
     
-    req.user = user;
-    next();
-  });
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Additional security checks
+    if (!decoded.userId || !decoded.email) {
+      console.warn(`⚠️  HTTP request rejected: Invalid token payload from ${req.ip || req.connection.remoteAddress}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid token payload'
+      });
+    }
+    
+    // Check if user exists in database (enhanced security)
+    let client;
+    try {
+      client = await pool.connect();
+      const { rows } = await client.query('SELECT id, email, is_email_verified, is_admin FROM users WHERE id = $1', [decoded.userId]);
+      
+      if (rows.length === 0) {
+        console.warn(`⚠️  HTTP request rejected: User not found in database from ${req.ip || req.connection.remoteAddress}`);
+        return res.status(403).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+      
+      // Check if email is verified (enhanced security)
+      if (!rows[0].is_email_verified) {
+        console.warn(`⚠️  HTTP request rejected: Email not verified from ${req.ip || req.connection.remoteAddress}`);
+        return res.status(403).json({
+          success: false,
+          error: 'Email not verified'
+        });
+      }
+      
+      // Attach enhanced user info to request
+      req.user = {
+        userId: decoded.userId,
+        email: decoded.email,
+        isEmailVerified: rows[0].is_email_verified,
+        isAdmin: rows[0].is_admin || false
+      };
+      
+      // Add request metadata for audit purposes
+      req.requestMetadata = {
+        timestamp: new Date(),
+        ipAddress: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        method: req.method,
+        path: req.path
+      };
+      
+      console.log(`✅ HTTP authenticated: User ${decoded.userId} (${decoded.email}) from ${req.ip || req.connection.remoteAddress} - ${req.method} ${req.path}`);
+      next();
+      
+    } catch (dbError) {
+      console.error('Database error during HTTP authentication:', dbError);
+      return res.status(503).json({
+        success: false,
+        error: 'Authentication service unavailable'
+      });
+    } finally {
+      if (client) client.release();
+    }
+    
+  } catch (error) {
+    console.warn(`⚠️  HTTP authentication failed from ${req.ip || req.connection.remoteAddress}:`, error.message);
+    return res.status(403).json({
+      success: false,
+      error: 'Invalid or expired token'
+    });
+  }
 }
 
 // Middleware to validate email format
@@ -59,72 +160,38 @@ const validatePassword = (req, res, next) => {
   next();
 };
 
-// Register a new user
-router.post('/register', validateEmail, validatePassword, async (req, res) => {
+// Register user
+router.post('/register', validateEmail, async (req, res) => {
   let client;
   try {
     const { email, password, full_name } = req.body;
-    
+
     // Get a client from the pool
     client = await pool.connect();
-    
+
     // Check if user already exists
-    const userCheck = await client.query('SELECT * FROM users WHERE email = $1', [email]);
-    
-    if (userCheck?.rows?.length > 0) {
-      // User already exists - attempt to log them in
-      const existingUser = userCheck.rows[0];
-      
-      // Check if user has a password (not a Google OAuth user)
-      if (!existingUser.password) {
-        return res.status(400).json({
-          success: false,
-          error: 'This email is registered with Google. Please use Google login instead.'
-        });
-      }
-      
-      // Verify the provided password matches
-      const passwordMatch = await bcrypt.compare(password, existingUser.password);
-      
-      if (!passwordMatch) {
-        return res.status(401).json({
-          success: false,
-          error: 'Email already registered with a different password. Please use the correct password or try logging in instead.'
-        });
-      }
-      
-      // Password matches - log the user in
-      const token = jwt.sign(
-        { userId: existingUser.id, email: existingUser.email },
-        process.env.JWT_SECRET || 'your-default-secret-key',
-        { expiresIn: process.env.JWT_EXPIRE || '24h' }
-      );
-      
-      return res.json({
-        success: true,
-        message: 'Login successful (existing user)',
-        data: {
-          token,
-          user: {
-            id: existingUser.id,
-            email: existingUser.email,
-            full_name: existingUser.full_name
-          }
-        }
+    const existingUser = await client.query('SELECT * FROM users WHERE email = $1', [email]);
+
+    if (existingUser.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'User with this email already exists'
       });
     }
-    
-    // User doesn't exist - proceed with registration
-    // Hash the password
+
+    // Hash password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
-    
+
+    // Normal user registration - always is_admin = false
+    const isAdmin = false; // Normal users are never admin
+
     // Insert new user
     const result = await client.query(
-      'INSERT INTO users (email, password, full_name) VALUES ($1, $2, $3) RETURNING id, email, full_name, created_at',
-      [email, hashedPassword, full_name]
+      'INSERT INTO users (email, password, full_name, is_admin, is_email_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, created_at, is_admin, is_email_verified',
+      [email, hashedPassword, full_name, isAdmin, true] // Normal users: is_admin=false, is_email_verified=true
     );
-    
+
     if (!result?.rows?.[0]) {
       throw new Error('User insertion did not return expected data');
     }
@@ -143,29 +210,42 @@ router.post('/register', validateEmail, validatePassword, async (req, res) => {
         console.error('No common group found to auto-add user');
       }
     } catch (err) {
-      console.error('Error auto-adding user to common group:', err.message);
     }
-    
+
     // Generate JWT token for the newly registered user
     const token = jwt.sign(
       { userId: result.rows[0].id, email: result.rows[0].email },
-      process.env.JWT_SECRET || 'your-default-secret-key',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE || '24h' }
     );
-    
+
+    // Generate refresh token
+    const refreshToken = jwt.sign(
+      { userId: result.rows[0].id, email: result.rows[0].email, type: 'refresh' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+    );
+
+    // Calculate expiry time in seconds
+    const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
+
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
-        token,
+        accessToken: token,
+        refreshToken: refreshToken,
+        expiresIn: expiresIn,
+        token: token, // Keep for backward compatibility
         user: result.rows[0]
       }
     });
-    
+
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(500).json({
       success: false,
-      error: `Registration failed: ${error.message}`
+      error: 'Registration failed. Please try again later.'
     });
   } finally {
     if (client) client.release(); // Always release the client back to the pool
@@ -214,15 +294,28 @@ router.post('/login', validateEmail, async (req, res) => {
     // Generate JWT token
     const token = jwt.sign(
       { userId: user?.id, email: user?.email },
-      process.env.JWT_SECRET || 'your-default-secret-key',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE || '24h' }
     );
+
+    // Generate refresh token
+    const refreshToken = jwt.sign(
+      { userId: user?.id, email: user?.email, type: 'refresh' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+    );
+
+    // Calculate expiry time in seconds
+    const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
 
     res.json({
       success: true,
       message: 'Login successful',
       data: {
-        token,
+        accessToken: token,
+        refreshToken: refreshToken,
+        expiresIn: expiresIn,
+        token: token, // Keep for backward compatibility
         user: {
           id: user.id,
           email: user.email,
@@ -232,12 +325,97 @@ router.post('/login', validateEmail, async (req, res) => {
     });
 
   } catch (error) {
+    console.error('Error in route:', error);
     res.status(500).json({
       success: false,
       error: 'Login failed'
     });
   } finally {
     if (client) client.release(); // Always release the client back to the pool
+  }
+});
+
+// Refresh token endpoint
+router.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Refresh token is required'
+      });
+    }
+
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+
+    // Check if it's a refresh token
+    if (decoded.type !== 'refresh') {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid token type'
+      });
+    }
+
+    // Check if user exists in database
+    let client;
+    try {
+      client = await pool.connect();
+      const { rows } = await client.query('SELECT id, email, is_email_verified FROM users WHERE id = $1', [decoded.userId]);
+
+      if (rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      // Check if email is verified
+      if (!rows[0].is_email_verified) {
+        return res.status(403).json({
+          success: false,
+          error: 'Email not verified'
+        });
+      }
+
+      // Generate new access token
+      const newAccessToken = jwt.sign(
+        { userId: decoded.userId, email: decoded.email },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRE || '24h' }
+      );
+
+      // Generate new refresh token
+      const newRefreshToken = jwt.sign(
+        { userId: decoded.userId, email: decoded.email, type: 'refresh' },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+      );
+
+      // Calculate expiry time in seconds
+      const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
+
+      res.json({
+        success: true,
+        message: 'Token refreshed successfully',
+        data: {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          expiresIn: expiresIn
+        }
+      });
+
+    } finally {
+      if (client) client.release();
+    }
+
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(401).json({
+      success: false,
+      error: 'Invalid or expired refresh token'
+    });
   }
 });
 
@@ -265,6 +443,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
     });
     
   } catch (error) {
+    console.error('Error in route:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch user profile'
@@ -308,6 +487,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
     });
     
   } catch (error) {
+    console.error('Error in route:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to update profile'
@@ -374,6 +554,7 @@ router.put('/change-password', authenticateToken, validatePassword, async (req, 
     });
     
   } catch (error) {
+    console.error('Error in route:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to change password'
@@ -383,6 +564,228 @@ router.put('/change-password', authenticateToken, validatePassword, async (req, 
   }
 });
 
-// Export router and authenticateToken middleware for use in other files
+// Admin authorization middleware
+async function requireAdmin(req, res, next) {
+  try {
+    // First ensure user is authenticated
+    if (!req.user || !req.user.userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required'
+      });
+    }
+
+    let client;
+    try {
+      client = await pool.connect();
+      
+      // Check if user has admin privileges
+      const { rows } = await client.query(
+        'SELECT is_admin FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      
+      if (rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+      
+      if (!rows[0].is_admin) {
+        console.warn(`⚠️  Unauthorized admin access attempt: User ${req.user.userId} (${req.user.email}) from ${req.ip || req.connection.remoteAddress}`);
+        return res.status(403).json({
+          success: false,
+          error: 'Admin privileges required'
+        });
+      }
+      
+      console.log(`✅ Admin access granted: User ${req.user.userId} (${req.user.email}) from ${req.ip || req.connection.remoteAddress}`);
+      next();
+      
+    } finally {
+      if (client) client.release();
+    }
+    
+  } catch (error) {
+    console.error('Error in admin authorization:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Authorization service unavailable'
+    });
+  }
+}
+
+// Admin registration with token validation
+router.post('/admin-register', async (req, res) => {
+  let client;
+  try {
+    const { email, password, full_name, adminToken } = req.body;
+
+    // Validate required fields
+    if (!email || !password || !full_name || !adminToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'All fields are required'
+      });
+    }
+
+    // Validate admin token
+    const expectedAdminToken = process.env.ADMIN_SETUP_TOKEN;
+    if (!expectedAdminToken) {
+      console.error('ADMIN_SETUP_TOKEN not configured in environment');
+      return res.status(500).json({
+        success: false,
+        error: 'Admin setup not configured'
+      });
+    }
+
+    if (adminToken !== expectedAdminToken) {
+      console.warn(`⚠️  Invalid admin setup token attempt from ${req.ip || req.connection.remoteAddress}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid admin setup token'
+      });
+    }
+
+    // Check if admin already exists
+    client = await pool.connect();
+    const existingAdmin = await client.query(
+      'SELECT id FROM users WHERE is_admin = true LIMIT 1'
+    );
+
+    if (existingAdmin.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'Admin account already exists'
+      });
+    }
+
+    // Check if email already exists
+    const existingUser = await client.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'User with this email already exists'
+      });
+    }
+
+    // Hash password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Create admin user
+    const result = await client.query(
+      'INSERT INTO users (email, password, full_name, is_admin, is_email_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, created_at',
+      [email, hashedPassword, full_name, true, true] // Admin users are automatically email verified
+    );
+
+    if (!result?.rows?.[0]) {
+      throw new Error('Admin user creation failed');
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: result.rows[0].id, email: result.rows[0].email },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRE || '24h' }
+    );
+
+    // Generate refresh token
+    const refreshToken = jwt.sign(
+      { userId: result.rows[0].id, email: result.rows[0].email, type: 'refresh' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+    );
+
+    // Calculate expiry time in seconds
+    const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
+
+    console.log(`✅ Admin account created: ${email} from ${req.ip || req.connection.remoteAddress}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Admin account created successfully',
+      data: {
+        accessToken: token,
+        refreshToken: refreshToken,
+        expiresIn: expiresIn,
+        token: token, // Keep for backward compatibility
+        user: result.rows[0]
+      }
+    });
+
+  } catch (error) {
+    console.error('Admin registration error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Admin registration failed. Please try again later.'
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// Validate admin setup token
+router.post('/validate-admin-token', async (req, res) => {
+  try {
+    const { adminToken } = req.body;
+
+    if (!adminToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Admin token is required'
+      });
+    }
+
+    const expectedAdminToken = process.env.ADMIN_SETUP_TOKEN;
+    if (!expectedAdminToken) {
+      return res.status(500).json({
+        success: false,
+        error: 'Admin setup not configured'
+      });
+    }
+
+    const isValid = adminToken === expectedAdminToken;
+
+    // Check if admin already exists
+    let client;
+    try {
+      client = await pool.connect();
+      const existingAdmin = await client.query(
+        'SELECT id FROM users WHERE is_admin = true LIMIT 1'
+      );
+
+      if (existingAdmin.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'Admin account already exists'
+        });
+      }
+    } finally {
+      if (client) client.release();
+    }
+
+    res.json({
+      success: true,
+      isValid,
+      message: isValid ? 'Valid admin token' : 'Invalid admin token'
+    });
+
+  } catch (error) {
+    console.error('Admin token validation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Token validation failed'
+    });
+  }
+});
+
+// Export router and middleware for use in other files
 module.exports = router;
 module.exports.authenticateToken = authenticateToken;
+module.exports.requireAdmin = requireAdmin;

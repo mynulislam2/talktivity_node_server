@@ -6,6 +6,44 @@ const { pool } = require('../db');
 const router = express.Router();
 const axios = require('axios'); // Added axios for token exchange
 
+// Validate JWT_SECRET environment variable
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required but not set. Please set JWT_SECRET in your environment variables.');
+}
+
+// Validate JWT_SECRET strength and security
+const jwtSecret = process.env.JWT_SECRET;
+if (jwtSecret.length < 32) {
+  throw new Error('JWT_SECRET must be at least 32 characters long for security. Current length: ' + jwtSecret.length);
+}
+
+// Check if JWT_SECRET is not a common weak value
+const weakSecrets = [
+  'your-default-secret-key',
+  'secret',
+  'password',
+  '123456',
+  'admin',
+  'test',
+  'dev',
+  'development',
+  'production',
+  'jwt-secret',
+  'my-secret',
+  'default-secret'
+];
+
+if (weakSecrets.includes(jwtSecret.toLowerCase())) {
+  throw new Error('JWT_SECRET cannot be a common weak value. Please use a strong, randomly generated secret.');
+}
+
+// Check if JWT_SECRET contains only basic characters (indicates it might be weak)
+if (/^[a-zA-Z0-9]+$/.test(jwtSecret) && jwtSecret.length < 64) {
+  console.warn('⚠️  Warning: JWT_SECRET appears to be weak. Consider using a longer, more complex secret for production.');
+}
+
+console.log('✅ JWT_SECRET validation passed - using secure secret');
+
 // Initialize Google OAuth client
 const client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
@@ -78,15 +116,28 @@ router.post('/google', async (req, res) => {
       // Generate JWT token
       const token = jwt.sign(
         { userId: user.id, email: user.email },
-        process.env.JWT_SECRET || 'your-default-secret-key',
+        process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRE || '24h' }
       );
+
+      // Generate refresh token
+      const refreshToken = jwt.sign(
+        { userId: user.id, email: user.email, type: 'refresh' },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+      );
+
+      // Calculate expiry time in seconds
+      const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
 
       res.json({
         success: true,
         message: 'Login successful (existing user)',
         data: {
-          token,
+          accessToken: token,
+          refreshToken: refreshToken,
+          expiresIn: expiresIn,
+          token: token, // Keep for backward compatibility
           user: {
             id: user.id,
             email: user.email,
@@ -96,12 +147,15 @@ router.post('/google', async (req, res) => {
         }
       });
     } else {
+      // Google user registration - always is_admin = false
+      const isAdmin = false; // Google users are never admin
+      
       // Create new user
       const newUser = await client.query(
-        `INSERT INTO users (email, full_name, google_id, profile_picture, password)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, email, full_name, google_id, profile_picture, created_at`,
-        [email, name, googleId, picture, ''] // Empty password for Google users
+        `INSERT INTO users (email, full_name, google_id, profile_picture, password, is_admin, is_email_verified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, email, full_name, google_id, profile_picture, created_at, is_admin, is_email_verified`,
+        [email, name, googleId, picture, '', isAdmin, true] // Google users: is_admin=false, is_email_verified=true
       );
 
       const createdUser = newUser.rows[0];
@@ -120,21 +174,33 @@ router.post('/google', async (req, res) => {
           console.error('No common group found to auto-add user');
         }
       } catch (err) {
-        console.error('Error auto-adding user to common group:', err.message);
       }
 
       // Generate JWT token
       const token = jwt.sign(
         { userId: createdUser.id, email: createdUser.email },
-        process.env.JWT_SECRET || 'your-default-secret-key',
+        process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRE || '24h' }
       );
+
+      // Generate refresh token
+      const refreshToken = jwt.sign(
+        { userId: createdUser.id, email: createdUser.email, type: 'refresh' },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRE || '7d' }
+      );
+
+      // Calculate expiry time in seconds
+      const expiresIn = process.env.JWT_EXPIRE === '24h' ? 24 * 60 * 60 : 86400; // Default to 24 hours in seconds
 
       res.status(201).json({
         success: true,
         message: 'Account created successfully',
         data: {
-          token,
+          accessToken: token,
+          refreshToken: refreshToken,
+          expiresIn: expiresIn,
+          token: token, // Keep for backward compatibility
           user: {
             id: createdUser.id,
             email: createdUser.email,

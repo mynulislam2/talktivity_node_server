@@ -2,9 +2,10 @@
 const express = require('express');
 const { pool } = require('../db');
 const router = express.Router();
+const { authenticateToken } = require('./auth-routes');
 
 // POST /api/topics - Add a single topic to an existing category or create a new category with the topic
-router.post('/topics', async (req, res) => {
+router.post('/topics', authenticateToken, async (req, res) => {
     let client;
     try {
         const { category, topic } = req.body; // Expecting 'category' string and 'topic' object
@@ -77,8 +78,7 @@ router.post('/topics', async (req, res) => {
         console.error('Error saving topic data:', error);
         res.status(500).json({
             success: false,
-            error: 'Internal server error',
-            details: error.message
+            error: 'Unable to save topic data at this time. Please try again later.'
         });
     } finally {
         if (client) client.release();
@@ -86,7 +86,7 @@ router.post('/topics', async (req, res) => {
 });
 
 // POST /api/topics/bulk - Add multiple topics to multiple categories in one request
-router.post('/topics/bulk', async (req, res) => {
+router.post('/topics/bulk', authenticateToken, async (req, res) => {
     let client;
     try {
         const categories = req.body;
@@ -144,14 +144,14 @@ router.post('/topics/bulk', async (req, res) => {
         res.status(200).json({ success: true, results });
     } catch (error) {
         console.error('Error in bulk topic upload:', error);
-        res.status(500).json({ success: false, error: 'Internal server error', details: error.message });
+        res.status(500).json({ success: false, error: 'Unable to upload topics at this time. Please try again later.' });
     } finally {
         if (client) client.release();
     }
 });
 
 // GET /api/topics - Get all topic categories
-router.get('/topics', async (req, res) => {
+router.get('/topics', authenticateToken, async (req, res) => {
     let client;
     try {
         client = await pool.connect();
@@ -168,8 +168,7 @@ router.get('/topics', async (req, res) => {
         console.error('Error fetching topic categories:', error);
         res.status(500).json({
             success: false,
-            error: 'Internal server error',
-            details: error.message
+            error: 'Unable to retrieve topic categories at this time. Please try again later.'
         });
     } finally {
         if (client) client.release();
@@ -177,7 +176,7 @@ router.get('/topics', async (req, res) => {
 });
 
 // GET /api/topics/:category_name - Get a specific topic category by name
-router.get('/topics/:category_name', async (req, res) => {
+router.get('/topics/:category_name', authenticateToken, async (req, res) => {
     let client;
     try {
         const { category_name } = req.params;
@@ -191,7 +190,7 @@ router.get('/topics/:category_name', async (req, res) => {
             WHERE category_name = $1
         `, [category_name]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, error: `Topic category '${category_name}' not found` });
+            return res.status(404).json({ success: false, error: 'Topic category not found' });
         }
         res.status(200).json({
             success: true,
@@ -201,8 +200,7 @@ router.get('/topics/:category_name', async (req, res) => {
         console.error(`Error fetching topic category '${req.params.category_name}':`, error);
         res.status(500).json({
             success: false,
-            error: 'Internal server error',
-            details: error.message
+            error: 'Unable to retrieve topic category at this time. Please try again later.'
         });
     } finally {
         if (client) client.release();

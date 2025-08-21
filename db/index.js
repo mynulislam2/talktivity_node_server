@@ -2,13 +2,38 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Validate required database environment variables
+const requiredEnvVars = {
+    PG_HOST: process.env.PG_HOST,
+    PG_PORT: process.env.PG_PORT,
+    PG_USER: process.env.PG_USER,
+    PG_PASSWORD: process.env.PG_PASSWORD,
+    PG_DATABASE: process.env.PG_DATABASE
+};
+
+// Check for missing environment variables
+const missingVars = Object.entries(requiredEnvVars)
+    .filter(([key, value]) => !value)
+    .map(([key]) => key);
+
+if (missingVars.length > 0) {
+    throw new Error(`Database configuration error: Missing required environment variables: ${missingVars.join(', ')}. Please set these variables in your .env file.`);
+}
+
+// Validate database credentials are not using default/weak values
+if (process.env.PG_PASSWORD === '1234' || process.env.PG_PASSWORD === 'password' || process.env.PG_PASSWORD === 'admin') {
+    throw new Error('Database security error: PG_PASSWORD cannot be a default/weak value. Please use a strong, secure password.');
+}
+
+console.log('✅ Database environment variables validated successfully');
+
 // Create a PostgreSQL connection pool
 const pool = new Pool({
-    host: process.env.PG_HOST || 'localhost',
-    port: parseInt(process.env.PG_PORT || '5433'),
-    user: process.env.PG_USER || 'postgres',
-    password: process.env.PG_PASSWORD || '1234',
-    database: process.env.PG_DATABASE || 'postgres',
+    host: process.env.PG_HOST,
+    port: parseInt(process.env.PG_PORT),
+    user: process.env.PG_USER,
+    password: process.env.PG_PASSWORD,
+    database: process.env.PG_DATABASE,
     // Optimized pool settings
     max: 20, // Maximum number of clients in the pool
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
@@ -33,7 +58,6 @@ const testConnection = async () => {
         console.log('✅ Database connected successfully at:', result.rows[0].now);
         return true;
     } catch (err) {
-        console.error('❌ Database connection error:', err.message);
         return false;
     } finally {
         if (client) client.release();
@@ -74,12 +98,16 @@ const indexExists = async (client, indexName) => {
 // Initialize database tables
 const initTables = async () => {
     let client;
-    try {
-        client = await pool.connect();
-        console.log('🔄 Initializing database tables...');
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+        try {
+            client = await pool.connect();
+            console.log('🔄 Initializing database tables... (attempt ' + (retryCount + 1) + ')');
 
-        // Use transactions for table creation to ensure atomicity
-        await client.query('BEGIN');
+            // Use transactions for table creation to ensure atomicity
+            await client.query('BEGIN');
 
         // Updated Users table with Google OAuth support
         await client.query(`
@@ -92,6 +120,7 @@ const initTables = async () => {
                 profile_picture TEXT, -- URL to profile picture
                 auth_provider VARCHAR(50) DEFAULT 'local', -- 'local', 'google', etc.
                 is_email_verified BOOLEAN DEFAULT false,
+                is_admin BOOLEAN DEFAULT false,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -102,6 +131,7 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
             CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
+            CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
         `);
 
         // User devices table removed - all functionality now uses userId
@@ -303,23 +333,212 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_speaking_sessions_user_date ON speaking_sessions(user_id, date);
         `);
 
-        await client.query('COMMIT');
-        console.log('✅ Database tables initialized successfully');
-        return true;
-    } catch (error) {
-        if (client) {
-            try {
-                await client.query('ROLLBACK');
-            } catch (rollbackError) {
-                console.error('Error during rollback:', rollbackError.message);
+        // Groups table for chat functionality
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS groups (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                is_common BOOLEAN DEFAULT false,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_groups_common ON groups(is_common);
+            CREATE INDEX IF NOT EXISTS idx_groups_created_by ON groups(created_by);
+        `);
+
+        // Group members table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS group_members (
+                id SERIAL PRIMARY KEY,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(group_id, user_id)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id);
+            CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id);
+        `);
+
+        // Group messages table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id SERIAL PRIMARY KEY,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                pinned BOOLEAN DEFAULT false,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_group_messages_group_id ON group_messages(group_id);
+            CREATE INDEX IF NOT EXISTS idx_group_messages_user_id ON group_messages(user_id);
+            CREATE INDEX IF NOT EXISTS idx_group_messages_created_at ON group_messages(created_at);
+        `);
+
+        // DM (Direct Messages) table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS dms (
+                id SERIAL PRIMARY KEY,
+                user1_id INTEGER NOT NULL,
+                user2_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user1_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (user2_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user1_id, user2_id)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_dms_user1_id ON dms(user1_id);
+            CREATE INDEX IF NOT EXISTS idx_dms_user2_id ON dms(user2_id);
+        `);
+
+        // DM messages table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS dm_messages (
+                id SERIAL PRIMARY KEY,
+                dm_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                pinned BOOLEAN DEFAULT false,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (dm_id) REFERENCES dms(id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_dm_messages_dm_id ON dm_messages(dm_id);
+            CREATE INDEX IF NOT EXISTS idx_dm_messages_sender_id ON dm_messages(sender_id);
+            CREATE INDEX IF NOT EXISTS idx_dm_messages_created_at ON dm_messages(created_at);
+        `);
+
+        // Last read tracking table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS last_read_at (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                group_id INTEGER,
+                dm_id INTEGER,
+                last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (dm_id) REFERENCES dms(id) ON DELETE CASCADE,
+                UNIQUE(user_id, group_id, dm_id)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_last_read_user_id ON last_read_at(user_id);
+            CREATE INDEX IF NOT EXISTS idx_last_read_group_id ON last_read_at(group_id);
+            CREATE INDEX IF NOT EXISTS idx_last_read_dm_id ON last_read_at(dm_id);
+        `);
+
+        // Create default common group if it doesn't exist
+        await client.query(`
+            INSERT INTO groups (name, description, is_common) 
+            VALUES ('Common Group', 'Default group for all users', true)
+            ON CONFLICT DO NOTHING
+        `);
+        
+        // Daily reports table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS daily_reports (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                report_date DATE NOT NULL,
+                report_data JSONB NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, report_date)
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date ON daily_reports(user_id, report_date);
+            CREATE INDEX IF NOT EXISTS idx_daily_reports_date ON daily_reports(report_date);
+        `);
+
+        // Topic categories table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS topic_categories (
+                id SERIAL PRIMARY KEY,
+                category_name VARCHAR(255) UNIQUE NOT NULL,
+                topics JSONB NOT NULL DEFAULT '[]',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_topic_categories_name ON topic_categories(category_name);
+        `);
+        
+        // Small delay to prevent deadlocks
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+            await client.query('COMMIT');
+            
+            // Note: Admin users are now created via secure token-based registration
+            // Use /api/auth/admin-register endpoint with ADMIN_SETUP_TOKEN
+            
+            console.log('✅ Database tables initialized successfully');
+            return true;
+            
+        } catch (error) {
+            if (client) {
+                try {
+                    await client.query('ROLLBACK');
+                } catch (rollbackError) {
+                    console.error('Error during rollback:', rollbackError.message);
+                }
             }
+            
+            // Check if it's a deadlock error
+            if (error.code === '40P01' || error.message.includes('deadlock')) {
+                retryCount++;
+                console.warn(`⚠️  Deadlock detected, retrying... (${retryCount}/${maxRetries})`);
+                
+                if (client) {
+                    client.release();
+                    client = null;
+                }
+                
+                // Wait before retrying (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+                continue;
+            }
+            
+            // For other errors, don't retry
+            console.error('❌ Error initializing database tables:', error.message);
+            console.error('Error details:', error.stack);
+            return false;
+        } finally {
+            if (client) client.release();
         }
-        console.error('❌ Error initializing database tables:', error.message);
-        console.error('Error details:', error.stack);
-        return false;
-    } finally {
-        if (client) client.release();
     }
+    
+    // If we get here, all retries failed
+    console.error('❌ Failed to initialize database tables after', maxRetries, 'attempts');
+    return false;
 };
 
 
@@ -376,7 +595,6 @@ const gracefulShutdown = async () => {
         console.log('✅ Database pool has ended');
         return true;
     } catch (err) {
-        console.error('❌ Error closing database pool:', err.message);
         return false;
     }
 };
