@@ -209,7 +209,7 @@ app.use((req, res, next) => {
 // Rate limiting middleware
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 1000 : 200, // Increased limits
+  max: process.env.NODE_ENV === 'development' ? 2000 : 1000, // Much higher limits
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.'
@@ -220,7 +220,7 @@ const globalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 100 : 50, // Increased limits
+  max: process.env.NODE_ENV === 'development' ? 200 : 100, // Much higher limits
   message: {
     success: false,
     error: 'Too many authentication attempts, please try again later.'
@@ -244,7 +244,7 @@ const adminLimiter = rateLimit({
 
 const groupLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 500 : 200, // Higher limits for group operations
+  max: process.env.NODE_ENV === 'development' ? 1000 : 1000, // Much higher limits for group operations
   message: {
     success: false,
     error: 'Too many group requests, please try again later.'
