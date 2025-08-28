@@ -148,6 +148,10 @@ const dmRoutes = require('./routes/dm');
 const app = express();
 const port = process.env.API_PORT || 8082;
 
+// Trust proxy configuration - required when running behind a proxy (like Render)
+// This allows Express to trust the X-Forwarded-For header from the proxy
+app.set('trust proxy', 1);
+
 // Security middleware - Helmet.js for security headers
 app.use(helmet({
   contentSecurityPolicy: {
