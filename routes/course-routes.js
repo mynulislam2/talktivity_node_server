@@ -2273,8 +2273,8 @@ router.get('/courses/achievements', authenticateToken, async (req, res) => {
         -- High scores (80+)
         COUNT(CASE WHEN quiz_score >= 80 THEN 1 END) as high_scores,
         
-        -- Total sessions
-        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as total_sessions,
+        -- Total sessions (calculated from speaking time: 1 session = 5 minutes = 300 seconds)
+        FLOOR(COALESCE(SUM(speaking_duration_seconds), 0) / 300) as total_sessions,
         
         -- Total quizzes
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as total_quizzes,
@@ -2335,7 +2335,7 @@ router.get('/courses/achievements', authenticateToken, async (req, res) => {
       {
         id: 'dedicated_learner',
         name: 'Dedicated Learner',
-        description: 'Complete 20 speaking sessions',
+        description: 'Complete 20 speaking sessions (100 minutes of speaking)',
         icon: '📚',
         unlocked: totalSessions >= 20,
         progress: Math.min(100, (totalSessions / 20) * 100)
