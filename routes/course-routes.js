@@ -283,8 +283,8 @@ router.get('/courses/status', authenticateToken, async (req, res) => {
     const currentWeek = Math.floor(daysSinceStart / 7) + 1;
     const currentDay = (daysSinceStart % 7) + 1;
 
-    // Note: Batch generation is now triggered by Day 7 completion in completion endpoints
-    // This automatic check has been removed to prevent continuous progression checking
+    // Check if batch generation is needed based on time progression (not completion)
+    await checkAndTriggerNextBatchByTime(client, userId, currentDay, currentWeek, course);
 
     // Sum all speaking session durations for today
     const sumResult = await client.query(
@@ -2739,6 +2739,7 @@ router.post('/courses/generate-next-batch', authenticateToken, async (req, res) 
 // Note: '/courses/activate-next-batch' endpoint removed in single-course mode
 
 // Helper function to check and trigger next batch generation when the last day of the current batch is completed
+// Note: This function is now only used for completion-based triggers, time-based triggers use checkAndTriggerNextBatchByTime
 async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek) {
   try {
     console.log(`Checking for batch completion for user ${userId}, week ${currentWeek}, day ${currentDay}`);
@@ -2756,7 +2757,7 @@ async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek)
 
     const currentCourse = currentCourseResult.rows[0];
     
-    // Check if this is the first time we're triggering for this week
+    // Check if batch generation is already triggered (either by time or completion)
     if (currentCourse.batch_status && currentCourse.batch_status.action === 'generate_next_batch') {
       console.log('Batch generation already triggered for this week');
       return;
@@ -2810,7 +2811,7 @@ async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek)
       [
         JSON.stringify({
           action: 'generate_next_batch',
-          message: `Batch ${currentCourse.batch_number || 1} completed! Ready to generate batch ${nextBatchNumber}`,
+          message: `Week ${currentWeek} completed! Ready to generate batch ${nextBatchNumber}`,
           batch_number: nextBatchNumber,
           completedWeek: currentWeek,
           completedDay: currentDay
@@ -2819,9 +2820,81 @@ async function checkAndTriggerNextBatch(client, userId, currentDay, currentWeek)
       ]
     );
 
-    console.log(`Batch generation triggered for user ${userId}, week ${currentWeek}, day ${currentDay}, batch ${nextBatchNumber}`);
+    console.log(`Batch generation triggered by completion for user ${userId}, week ${currentWeek}, day ${currentDay}, batch ${nextBatchNumber}`);
   } catch (error) {
     console.error('Error in checkAndTriggerNextBatch:', error);
+  }
+}
+
+// Helper function to check and trigger next batch generation based on time progression (not completion)
+async function checkAndTriggerNextBatchByTime(client, userId, currentDay, currentWeek, course) {
+  try {
+    console.log(`Checking for batch generation by time for user ${userId}, week ${currentWeek}, day ${currentDay}`);
+    
+    // Check if this is the first time we're triggering for this week
+    if (course.batch_status && course.batch_status.action === 'generate_next_batch') {
+      console.log('Batch generation already triggered for this week');
+      return;
+    }
+
+    // Determine if this is the first day of a new week (Day 1 of any week after Week 1)
+    const isFirstDayOfNewWeek = currentDay === 1 && currentWeek > 1;
+    
+    if (!isFirstDayOfNewWeek) {
+      console.log(`Not the first day of a new week. Current day: ${currentDay}, Current week: ${currentWeek}`);
+      return;
+    }
+
+    // Check if this is the final week (12 weeks = 3 months)
+    const TOTAL_COURSE_WEEKS = 12;
+    const isFinalWeek = currentWeek >= TOTAL_COURSE_WEEKS;
+    
+    if (isFinalWeek) {
+      console.log(`Course completed! User ${userId} has finished all ${TOTAL_COURSE_WEEKS} weeks`);
+      
+      // Set course as completed instead of generating next batch
+      await client.query(
+        `UPDATE user_courses 
+         SET batch_status = $1 
+         WHERE id = $2`,
+        [
+          JSON.stringify({
+            action: 'course_completed',
+            message: `Congratulations! You have completed the full 3-month course!`,
+            completedWeek: currentWeek,
+            completedDay: currentDay,
+            totalWeeks: TOTAL_COURSE_WEEKS
+          }),
+          course.id
+        ]
+      );
+      
+      console.log(`Course marked as completed for user ${userId}, week ${currentWeek}, day ${currentDay}`);
+      return;
+    }
+
+    const nextBatchNumber = (course.batch_number || 1) + 1;
+    
+    // Set batch status to trigger next batch generation
+    await client.query(
+      `UPDATE user_courses 
+       SET batch_status = $1 
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          action: 'generate_next_batch',
+          message: `Week ${currentWeek - 1} completed! Ready to generate batch ${nextBatchNumber} for week ${currentWeek}`,
+          batch_number: nextBatchNumber,
+          completedWeek: currentWeek - 1,
+          completedDay: 7
+        }),
+        course.id
+      ]
+    );
+
+    console.log(`Batch generation triggered by time for user ${userId}, week ${currentWeek}, day ${currentDay}, batch ${nextBatchNumber}`);
+  } catch (error) {
+    console.error('Error in checkAndTriggerNextBatchByTime:', error);
   }
 }
 
