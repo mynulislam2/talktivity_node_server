@@ -12,12 +12,32 @@ router.get('/weekly', authenticateToken, async (req, res) => {
     // Get current week's start date (Monday)
     const now = new Date();
     const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay() + 1); // Monday
+    // Fix: getDay() returns 0 for Sunday, so we need to handle this case
+    const dayOfWeek = now.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, go back 6 days; otherwise go back (dayOfWeek - 1) days
+    weekStart.setDate(now.getDate() - daysToMonday);
     weekStart.setHours(0, 0, 0, 0);
     
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 6); // Sunday
     weekEnd.setHours(23, 59, 59, 999);
+
+    console.log('Weekly leaderboard date range:', {
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      currentDate: now.toISOString()
+    });
+
+    // Check if there are any users in the database
+    const userCountResult = await client.query('SELECT COUNT(*) as count FROM users WHERE is_admin = false');
+    console.log('Total non-admin users in database:', userCountResult.rows[0].count);
+
+    // Check if there's any daily_progress data in the date range
+    const progressCountResult = await client.query(
+      'SELECT COUNT(*) as count FROM daily_progress WHERE date >= $1 AND date <= $2',
+      [weekStart, weekEnd]
+    );
+    console.log('Daily progress entries in date range:', progressCountResult.rows[0].count);
 
     // Get all users with their weekly XP and level
     const leaderboardQuery = `
@@ -184,8 +204,14 @@ router.get('/my-position', authenticateToken, async (req, res) => {
   let client;
   try {
     client = await db.pool.connect();
-    const userId = req.user.id;
+    const userId = req.user.userId; // Changed from req.user.id to req.user.userId
     const { type = 'weekly' } = req.query; // 'weekly' or 'overall'
+
+    console.log('My position request:', {
+      userId,
+      type,
+      user: req.user
+    });
 
     let dateFilter = '';
     let params = [userId];
@@ -194,7 +220,10 @@ router.get('/my-position', authenticateToken, async (req, res) => {
       // Get current week's start date (Monday)
       const now = new Date();
       const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - now.getDay() + 1); // Monday
+      // Fix: getDay() returns 0 for Sunday, so we need to handle this case
+      const dayOfWeek = now.getDay();
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, go back 6 days; otherwise go back (dayOfWeek - 1) days
+      weekStart.setDate(now.getDate() - daysToMonday);
       weekStart.setHours(0, 0, 0, 0);
       
       const weekEnd = new Date(weekStart);
@@ -322,3 +351,4 @@ router.get('/my-position', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+
