@@ -6,25 +6,36 @@ const { authenticateToken } = require('./auth-routes');
 // List all groups (with search/filter)
 router.get('/', authenticateToken, async (req, res) => {
   const { search, category, featured, trending } = req.query;
-  let query = 'SELECT * FROM groups WHERE 1=1';
+  let query = `
+    SELECT 
+      g.*,
+      COALESCE(member_counts.member_count, 0) as member_count
+    FROM groups g
+    LEFT JOIN (
+      SELECT group_id, COUNT(*) as member_count
+      FROM group_members
+      GROUP BY group_id
+    ) member_counts ON g.id = member_counts.group_id
+    WHERE 1=1
+  `;
   const params = [];
   if (search) {
     params.push(`%${search}%`);
-    query += ` AND (name ILIKE $${params.length} OR description ILIKE $${params.length})`;
+    query += ` AND (g.name ILIKE $${params.length} OR g.description ILIKE $${params.length})`;
   }
   if (category) {
     params.push(category);
-    query += ` AND category = $${params.length}`;
+    query += ` AND g.category = $${params.length}`;
   }
   if (featured) {
     params.push(true);
-    query += ` AND is_featured = $${params.length}`;
+    query += ` AND g.is_featured = $${params.length}`;
   }
   if (trending) {
     params.push(true);
-    query += ` AND is_trending = $${params.length}`;
+    query += ` AND g.is_trending = $${params.length}`;
   }
-  query += ' ORDER BY is_featured DESC, is_trending DESC, name ASC';
+  query += ' ORDER BY g.is_featured DESC, g.is_trending DESC, g.name ASC';
   try {
     console.log('✅ Fetching groups for user:', req.user.userId);
     const { rows } = await pool.query(query, params);

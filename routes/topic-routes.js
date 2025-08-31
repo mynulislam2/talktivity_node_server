@@ -40,7 +40,11 @@ router.post('/topics', authenticateToken, async (req, res) => {
             if (topicIndex !== -1) {
                 // Topic exists in array: update it
                 const updatedTopics = [...existingTopics];
-                updatedTopics[topicIndex] = { ...updatedTopics[topicIndex], ...topic }; // Merge new data
+                updatedTopics[topicIndex] = { 
+                    ...updatedTopics[topicIndex], 
+                    ...topic,
+                    updated_at: new Date().toISOString()
+                }; // Merge new data and add updated_at
                 result = await client.query(`
                     UPDATE topic_categories SET
                         topics = $2,
@@ -50,7 +54,11 @@ router.post('/topics', authenticateToken, async (req, res) => {
                 `, [category, JSON.stringify(updatedTopics)]);
             } else {
                 // Topic doesn't exist in array: add it
-                const updatedTopics = [...existingTopics, topic];
+                const topicWithTimestamp = {
+                    ...topic,
+                    created_at: new Date().toISOString()
+                };
+                const updatedTopics = [...existingTopics, topicWithTimestamp];
                 result = await client.query(`
                     UPDATE topic_categories SET
                         topics = $2,
@@ -61,11 +69,15 @@ router.post('/topics', authenticateToken, async (req, res) => {
             }
         } else {
             // Category does not exist: insert a new one with the single topic
+            const topicWithTimestamp = {
+                ...topic,
+                created_at: new Date().toISOString()
+            };
             result = await client.query(`
                 INSERT INTO topic_categories (category_name, topics)
                 VALUES ($1, $2)
                 RETURNING *
-            `, [category, JSON.stringify([topic])]); // Store as an array containing the single topic
+            `, [category, JSON.stringify([topicWithTimestamp])]); // Store as an array containing the single topic
         }
 
         res.status(200).json({
@@ -122,9 +134,17 @@ router.post('/topics/bulk', authenticateToken, async (req, res) => {
                 }
                 const topicIndex = existingTopics.findIndex(t => t.id === topic.id);
                 if (topicIndex !== -1) {
-                    existingTopics[topicIndex] = { ...existingTopics[topicIndex], ...topic };
+                    existingTopics[topicIndex] = { 
+                        ...existingTopics[topicIndex], 
+                        ...topic,
+                        updated_at: new Date().toISOString()
+                    };
                 } else {
-                    existingTopics.push(topic);
+                    const topicWithTimestamp = {
+                        ...topic,
+                        created_at: new Date().toISOString()
+                    };
+                    existingTopics.push(topicWithTimestamp);
                 }
             }
             // Upsert category
