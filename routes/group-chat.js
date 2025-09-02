@@ -12,9 +12,10 @@ router.get('/', authenticateToken, async (req, res) => {
       COALESCE(member_counts.member_count, 0) as member_count
     FROM groups g
     LEFT JOIN (
-      SELECT group_id, COUNT(*) as member_count
-      FROM group_members
-      GROUP BY group_id
+      SELECT gm.group_id, COUNT(u.id) as member_count
+      FROM group_members gm
+      JOIN users u ON gm.user_id = u.id
+      GROUP BY gm.group_id
     ) member_counts ON g.id = member_counts.group_id
     WHERE 1=1
   `;
@@ -39,8 +40,15 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     console.log('✅ Fetching groups for user:', req.user.userId);
     const { rows } = await pool.query(query, params);
-    console.log('✅ Successfully fetched groups, count:', rows.length);
-    res.json({ success: true, groups: rows });
+    
+    // Ensure member_count is an integer
+    const processedRows = rows.map(row => ({
+      ...row,
+      member_count: parseInt(row.member_count) || 0
+    }));
+    
+    console.log('✅ Successfully fetched groups, count:', processedRows.length);
+    res.json({ success: true, groups: processedRows });
   } catch (err) {
     console.error('❌ Error fetching groups:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve groups at this time. Please try again later.' });
@@ -111,7 +119,11 @@ router.get('/:groupId/members', authenticateToken, async (req, res) => {
       [groupId]
     );
     console.log('✅ Successfully fetched group members, count:', rows.length);
-    res.json({ success: true, members: rows });
+    res.json({ 
+      success: true, 
+      members: rows,
+      member_count: rows.length // Add member count for consistency
+    });
   } catch (err) {
     console.error('❌ Error fetching group members:', err);
     res.status(500).json({ success: false, error: 'Unable to retrieve group members at this time. Please try again later.' });
