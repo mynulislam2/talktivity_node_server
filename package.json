@@ -9,6 +9,7 @@
         "migrate": "node migrate-existing-users.js"
     },
     "dependencies": {
+        "@getbrevo/brevo": "^3.0.1",
         "@types/react-datepicker": "^6.2.0",
         "axios": "^1.10.0",
         "bcrypt": "^5.1.1",
