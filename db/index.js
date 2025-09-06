@@ -145,6 +145,8 @@ const initTables = async () => {
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 transcript TEXT,
                 user_id INTEGER NOT NULL,
+                session_duration INTEGER DEFAULT NULL,
+                agent_state VARCHAR(255) DEFAULT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
         `);
@@ -153,6 +155,7 @@ const initTables = async () => {
             CREATE INDEX IF NOT EXISTS idx_conversations_room ON conversations(room_name);
             CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp);
             CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+            CREATE INDEX IF NOT EXISTS idx_conversations_session_duration ON conversations(session_duration) WHERE session_duration IS NOT NULL;
         `);
 
         // Onboarding data table
