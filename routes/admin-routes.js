@@ -30,20 +30,25 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
         u.created_at,
         u.google_id,
         u.profile_picture,
-        COALESCE(call_stats.completed_calls, 0) as completed_calls,
+        COALESCE(speaking_stats.speaking_sessions_count, 0) as completed_calls,
+        COALESCE(speaking_stats.speaking_duration, 0) as total_conversation_duration,
         COALESCE(last_activity.last_activity, u.created_at) as last_activity,
         CASE 
-          WHEN has_onboarding.has_onboarding = true AND call_stats.user_id IS NOT NULL THEN 'Both'
+          WHEN has_onboarding.has_onboarding = true AND speaking_stats.user_id IS NOT NULL THEN 'Both'
           WHEN has_onboarding.has_onboarding = true THEN 'Onboarded'
-          WHEN call_stats.user_id IS NOT NULL THEN 'Active'
+          WHEN speaking_stats.user_id IS NOT NULL THEN 'Active'
           ELSE 'Registered'
         END as status
       FROM users u
       LEFT JOIN (
-        SELECT user_id, COUNT(*) as completed_calls
-        FROM conversations
+        SELECT 
+          user_id,
+          COUNT(*) as speaking_sessions_count,
+          COALESCE(SUM(duration_seconds), 0) as speaking_duration
+        FROM speaking_sessions
+        WHERE duration_seconds > 0
         GROUP BY user_id
-      ) call_stats ON u.id = call_stats.user_id
+      ) speaking_stats ON u.id = speaking_stats.user_id
       LEFT JOIN (
         SELECT user_id, MAX(timestamp) as last_activity
         FROM conversations
@@ -219,11 +224,21 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
     `);
     const totalCourses = parseInt(courseResult.rows[0].count);
     
+    // Get total speaking session duration from all users
+    const totalConversationDurationResult = await client.query(`
+      SELECT 
+        COALESCE(SUM(duration_seconds), 0) as total_duration_seconds
+      FROM speaking_sessions
+      WHERE duration_seconds > 0
+    `);
+    const totalConversationDurationSeconds = parseInt(totalConversationDurationResult.rows[0].total_duration_seconds);
+    
     res.json({
       totalRegistered,
       totalOnboarded,
       totalCalls,
-      totalCourses
+      totalCourses,
+      totalConversationDurationSeconds
     });
     
   } catch (error) {
