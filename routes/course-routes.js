@@ -1830,7 +1830,7 @@ router.post(
   }
 );
 
-// Helper function to generate personalized course using Groq AI
+// Function to generate personalized course using Groq AI
 async function generatePersonalizedCourse(
   onboardingData,
   conversations,
@@ -1846,7 +1846,6 @@ async function generatePersonalizedCourse(
       nativeLanguage: onboardingData.native_language,
       industry: onboardingData.industry,
       interests: onboardingData.interests,
-
       mainGoal: onboardingData.main_goal,
       speakingFeelings: onboardingData.speaking_feelings,
       speakingFrequency: onboardingData.speaking_frequency,
@@ -1956,12 +1955,19 @@ GENERATION RULES:
 8. Each 'firstPrompt' should be a creative, open-ended question or challenge.
 
 PERSONALIZATION FACTORS:
-- Current level: ${contextData.onboarding.currentLevel}
-- Native language: ${contextData.onboarding.nativeLanguage}
-- Industry: ${contextData.onboarding.industry}
-- Interests: ${contextData.onboarding.interests?.join(", ")}
-
-- Main goal: ${contextData.onboarding.mainGoal}
+- Skill to Improve: Focus topics and prompts on enhancing ${contextData.onboarding.skillToImprove}. For example, if it's grammar, include scenarios that require structured sentences; if vocabulary, introduce and encourage use of new words related to their known words.
+- Current Level: Tailor complexity to ${contextData.onboarding.currentLevel}. For beginners, use simple scenarios and vocabulary; for advanced, incorporate nuanced debates or simulations with idioms and advanced structures.
+- Native Language: Adapt examples and corrections considering influences from ${contextData.onboarding.nativeLanguage}. Avoid common interference errors (e.g., if native is Bangla, focus on article usage or verb tenses).
+- Industry: Integrate at least 2 topics with real-world ${contextData.onboarding.industry} scenarios, like professional meetings or client interactions, using industry-specific vocabulary.
+- Interests: Base at least 2 topics on ${contextData.onboarding.interests?.join(", ")}, remixing them into engaging activities (e.g., if interests include travel and food, create a role-play about planning a food tour).
+- Main Goal: Align all topics to support ${contextData.onboarding.mainGoal}, such as building confidence for work conversations or travel ease, by choosing formats that directly practice that goal.
+- Speaking Feelings: Adjust encouragement based on ${contextData.onboarding.speakingFeelings}; if anxious, use gentle, supportive prompts; if confident, challenge with more complex interactions.
+- Speaking Frequency: If low (${contextData.onboarding.speakingFrequency}), start with basic daily scenarios to build habit; if high, focus on refinement and advanced fluency.
+- Current Learning Methods: Incorporate elements from ${contextData.onboarding.currentLearningMethods?.join(", ")}, like app-style quizzes in prompts or video-inspired role-plays.
+- Known Words (Set 1): Use and build upon ${contextData.onboarding.knownWords1?.join(", ")} in prompts, encouraging expansion to related vocabulary.
+- Known Words (Set 2): Integrate ${contextData.onboarding.knownWords2?.join(", ")} into scenarios, targeting fluency with familiar terms while introducing synonyms.
+- English Style: Match prompts to ${contextData.onboarding.englishStyle}, e.g., casual for everyday talk, business for professional simulations.
+- Tutor Style: Embody ${contextData.onboarding.tutorStyle?.join(", ")} in all prompts—e.g., if strict, include direct corrections; if encouraging, add positive feedback cues.
 
 ${strictJsonWarning}`,
     },
@@ -2027,10 +2033,10 @@ ${strictJsonWarning}`,
             console.warn("Retrying Groq request for better JSON...");
             await new Promise((res) => setTimeout(res, 2000));
             return await generatePersonalizedCourse(
-              onboardingData,
-              conversations,
-              retryCount + 1
-            );
+                onboardingData,
+                conversations,
+                retryCount + 1
+              );
           }
           throw new Error("No JSON array found in AI response after retries");
         }
@@ -2338,7 +2344,7 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
     const weeklyExams = await client.query(
       `
       SELECT week_number, exam_score, exam_date, exam_duration_seconds
-      FROM weekly_exams 
+      FROM weekly_exams
       WHERE user_id = $1 AND course_id = $2
       ORDER BY week_number
     `,
@@ -3023,9 +3029,6 @@ router.post(
     }
   }
 );
-
-// Activate next batch of personalized topics (no-op in single-course mode; clears batch status)
-// Note: '/courses/activate-next-batch' endpoint removed in single-course mode
 
 // Helper function to check and trigger next batch generation when the last day of the current batch is completed
 // Note: This function is now only used for completion-based triggers, time-based triggers use checkAndTriggerNextBatchByTime
