@@ -144,6 +144,8 @@ const transcriptRoutes = require('./routes/transcript-routes');
 const groupChatRoutes = require('./routes/group-chat');
 const dmRoutes = require('./routes/dm');
 const leaderboardRoutes = require('./routes/leaderboard-routes');
+const aiRoutes = require('./routes/ai-routes');
+const vocabularyRoutes = require('./routes/vocabulary-routes');
 
 // Create Express app
 const app = express();
@@ -351,6 +353,8 @@ app.use('/api/groups', groupLimiter, groupChatRoutes);
 app.use('/api/group-chat', groupLimiter, groupChatRoutes); // Add this line to support both /groups and /group-chat endpoints
 app.use('/api/dms', dmRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/vocabulary', vocabularyRoutes);
 
 // 404 handler
 app.use((req, res) => {
