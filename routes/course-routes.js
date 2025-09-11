@@ -1219,7 +1219,7 @@ router.post(
       // Update listening quiz completion
       await client.query(
         `UPDATE daily_progress 
-       SET listening_quiz_completed = true, listening_quiz_score = $1, listening_quiz_attempts = listening_quiz_attempts + 1
+       SET listening_quiz_completed = true, listening_quiz_score = $1
        WHERE user_id = $2 AND date = $3`,
         [score, userId, today]
       );
