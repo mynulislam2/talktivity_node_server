@@ -127,6 +127,7 @@ async function authenticateToken(req, res, next) {
         isEmailVerified: rows[0].is_email_verified,
         isAdmin: rows[0].is_admin || false,
       };
+      
 
       // Add request metadata for audit purposes
       req.requestMetadata = {
