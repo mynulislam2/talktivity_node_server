@@ -1,6 +1,8 @@
-Project Structre:
+# Talktivity Server
+
+## Project Structure
 ```
-Agentserver/
+talktivity_node_server/
 ├── package.json               # Project dependencies & scripts
 ├── .gitignore                 # Git ignore rules
 ├── README.md                  # Project documentation
@@ -23,10 +25,13 @@ Agentserver/
     │   │   └── errorHandler.js
     │   │
     │   ├── logger/
-    │   │   └── index.js       # pino/winston init
+    │   │   └── index.js       # Winston logger init
     │   │
-    │   └── db/
-    │       └── client.js      # knex/pg/prisma client (choose one)
+    │   ├── db/
+    │   │   └── client.js      # PostgreSQL client
+    │   │
+    │   └── socket/
+    │       └── index.js       # Socket.IO setup
     │
     ├── app.js                 # Express app creation (middlewares, mount routers)
     ├── server.js              # Server bootstrap (listen, signals)
@@ -104,3 +109,37 @@ Agentserver/
             ├── schema.js
             └── index.js
 ```
+
+## Getting Started
+
+### Prerequisites
+- Node.js (version 14 or higher)
+- PostgreSQL database
+- npm or yarn
+
+### Installation
+1. Clone the repository
+2. Navigate to the project directory
+3. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+### Environment Setup
+Create a `.env` file in the root directory with the following variables:
+```
+JWT_SECRET=your_jwt_secret_key_here_at_least_32_characters
+PG_HOST=localhost
+PG_PORT=5432
+PG_USER=your_database_user
+PG_PASSWORD=your_database_password
+PG_DATABASE=your_database_name
+ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
+```
+
+### Running the Application
+- Development mode: `npm run dev`
+- Production mode: `npm start`
+
+### API Endpoints
+The server exposes several REST API endpoints for authentication, groups, and transcripts functionality.
