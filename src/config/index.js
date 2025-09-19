@@ -62,6 +62,23 @@ const config = {
   // Security configuration
   security: {
     saltRounds: 10
+  },
+  
+  // Google OAuth configuration
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || 'postmessage'
+  },
+  
+  // Admin configuration
+  admin: {
+    setupToken: process.env.ADMIN_SETUP_TOKEN
+  },
+  
+  // Groq API configuration
+  groq: {
+    apiKey: process.env.GROQ_API_KEY
   }
 };
 

@@ -79,14 +79,51 @@ async function authenticateToken(req, res, next) {
 }
 
 // Middleware to check if user is admin
-function requireAdmin(req, res, next) {
-  if (!req.user || !req.user.isAdmin) {
-    return res.status(403).json({
+async function requireAdmin(req, res, next) {
+  try {
+    // First ensure user is authenticated
+    if (!req.user || !req.user.userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required'
+      });
+    }
+
+    let client;
+    try {
+      client = await pool.connect();
+      
+      // Check if user has admin privileges
+      const { rows } = await client.query(
+        'SELECT is_admin FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      
+      if (rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+      
+      if (!rows[0].is_admin) {
+        return res.status(403).json({
+          success: false,
+          error: 'Admin privileges required'
+        });
+      }
+      
+      next();
+    } finally {
+      if (client) client.release();
+    }
+  } catch (error) {
+    console.error('Error in admin authorization:', error);
+    res.status(500).json({
       success: false,
-      error: 'Admin access required',
+      error: 'Authorization service unavailable'
     });
   }
-  next();
 }
 
 module.exports = { authenticateToken, requireAdmin };

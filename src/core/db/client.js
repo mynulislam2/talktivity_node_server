@@ -78,8 +78,60 @@ const gracefulShutdown = async () => {
     }
 };
 
+// Get daily report
+const getDailyReport = async (userId, date) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query(
+            'SELECT * FROM daily_reports WHERE user_id = $1 AND report_date = $2',
+            [userId, date]
+        );
+        return result.rows[0];
+    } finally {
+        client.release();
+    }
+};
+
+// Save daily report
+const saveDailyReport = async (userId, date, reportData) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query(
+            `INSERT INTO daily_reports (user_id, report_date, report_data)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, report_date) 
+             DO UPDATE SET report_data = $3, updated_at = NOW()
+             RETURNING *`,
+            [userId, date, reportData]
+        );
+        return result.rows[0];
+    } finally {
+        client.release();
+    }
+};
+
+// Get latest conversations for reports
+const getLatestConversations = async (userId, limit) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query(
+            `SELECT transcript FROM conversations 
+             WHERE user_id = $1 
+             ORDER BY timestamp DESC 
+             LIMIT $2`,
+            [userId, limit]
+        );
+        return result.rows;
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     pool,
     testConnection,
-    gracefulShutdown
+    gracefulShutdown,
+    getDailyReport,
+    saveDailyReport,
+    getLatestConversations
 };

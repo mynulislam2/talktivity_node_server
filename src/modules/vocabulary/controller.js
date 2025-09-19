@@ -1,8 +1,20 @@
 // src/modules/vocabulary/controller.js
 // Vocabulary request handlers
 
-const { fetchVocabularyWords } = require('./service');
+const { fetchVocabularyWords, fetchAllVocabulary } = require('./service');
 const { successResponse, errorResponse } = require('../../core/http/response');
+
+// Get all vocabulary
+const getAllVocabulary = async (req, res) => {
+  try {
+    const result = await fetchAllVocabulary();
+    
+    res.status(200).json(successResponse(result, 'All vocabulary retrieved successfully'));
+  } catch (error) {
+    console.error('Error fetching all vocabulary:', error);
+    res.status(500).json(errorResponse('Failed to fetch vocabulary'));
+  }
+};
 
 // Get words for specific week and day
 const getVocabularyWords = async (req, res) => {
@@ -30,5 +42,6 @@ const getVocabularyWords = async (req, res) => {
 };
 
 module.exports = {
+  getAllVocabulary,
   getVocabularyWords
 };

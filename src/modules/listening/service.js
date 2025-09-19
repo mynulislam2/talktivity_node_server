@@ -247,114 +247,135 @@ const generatePersonalizedCourse = async (onboardingData, conversations) => {
       currentLearningMethods: onboardingData.current_learning_methods || []
     };
     
-    // Create a detailed prompt for the AI to generate personalized topics
-    const systemPrompt = `You are an expert English learning course designer. Based on the user's profile and conversation history, create a personalized 12-week English conversation course with 84 topics (12 weeks × 7 days).
+    // Generate personalized topics using AI
+    const personalizedTopics = [];
     
-    USER PROFILE:
-    - Skill to improve: ${userProfile.skillToImprove}
-    - Language background: ${userProfile.languageStatement}
-    - Industry: ${userProfile.industry}
-    - Speaking comfort level: ${userProfile.speakingFeelings}
-    - Speaking frequency: ${userProfile.speakingFrequency}
-    - Main goal: ${userProfile.mainGoal}
-    - Gender: ${userProfile.gender}
-    - Current level: ${userProfile.currentLevel}
-    - Native language: ${userProfile.nativeLanguage}
-    - Interests: ${userProfile.interests.join(', ')}
-    - Preferred English style: ${userProfile.englishStyle}
-    - Preferred tutor style: ${userProfile.tutorStyle.join(', ')}
+    // Create scenarios based on user interests
+    for (let i = 0; i < Math.min(userProfile.interests.length, 5); i++) {
+      const interest = userProfile.interests[i];
+      try {
+        const roleplayResult = await generateRoleplay(
+          "English learner", 
+          `Enthusiastic expert in ${interest}`, 
+          `Discussing ${interest} with an English learner at ${userProfile.currentLevel} level`
+        );
+        
+        if (roleplayResult.success && roleplayResult.data) {
+          personalizedTopics.push({
+            id: `topic_interest_${i + 1}`,
+            title: `${interest.charAt(0).toUpperCase() + interest.slice(1)} Discussion`,
+            prompt: roleplayResult.data.prompt,
+            firstPrompt: roleplayResult.data.firstPrompt,
+            category: interest.charAt(0).toUpperCase() + interest.slice(1)
+          });
+        }
+      } catch (error) {
+        console.warn(`Failed to generate AI topic for interest ${interest}:`, error.message);
+      }
+    }
     
-    Create diverse, engaging conversation topics that match the user's interests, level, and goals. Each topic should include:
-    1. A unique ID (topic_1, topic_2, etc.)
-    2. A descriptive title
-    3. A prompt for the AI role (describing the persona the AI should embody)
-    4. A first prompt (the opening line the AI should say)
-    5. A category
+    // Create scenario based on industry
+    try {
+      const industryRoleplay = await generateRoleplay(
+        "English learner", 
+        `Colleague in ${userProfile.industry} industry`, 
+        `Practicing workplace communication in ${userProfile.industry} at ${userProfile.currentLevel} level`
+      );
+      
+      if (industryRoleplay.success && industryRoleplay.data) {
+        personalizedTopics.push({
+          id: 'topic_industry_1',
+          title: `Workplace Communication in ${userProfile.industry}`,
+          prompt: industryRoleplay.data.prompt,
+          firstPrompt: industryRoleplay.data.firstPrompt,
+          category: 'Work'
+        });
+      }
+    } catch (error) {
+      console.warn(`Failed to generate AI topic for industry ${userProfile.industry}:`, error.message);
+    }
     
-    Make sure topics progress in difficulty and cover various aspects of English conversation.
-    Return ONLY a JSON array of 84 topic objects with the exact structure shown in the example.`;
-    
-    const userPrompt = `Generate a personalized 12-week English conversation course with 84 topics based on this user profile. Return ONLY a JSON array of topic objects.`;
-    
-    // For now, we'll create a set of sample topics based on the user's profile
-    // In a production environment, this would call the AI service
-    const sampleTopics = [];
-    
-    // Create topics based on user interests
-    const interestBasedTopics = userProfile.interests.map((interest, index) => ({
-      id: `topic_interest_${index + 1}`,
-      title: `${interest.charAt(0).toUpperCase() + interest.slice(1)} Discussion`,
-      prompt: `You are an enthusiastic expert in ${interest}. Engage the learner in a conversation about ${interest} in a way that's appropriate for their ${userProfile.currentLevel} level.`,
-      firstPrompt: `I'm excited to talk with you about ${interest}! What would you like to know or discuss about this topic?`,
-      category: interest.charAt(0).toUpperCase() + interest.slice(1)
-    }));
-    
-    // Create topics based on industry
-    const industryTopic = {
-      id: 'topic_industry_1',
-      title: `Workplace Communication in ${userProfile.industry}`,
-      prompt: `You are a colleague in the ${userProfile.industry} industry. Help the learner practice workplace communication relevant to their field at their ${userProfile.currentLevel} level.`,
-      firstPrompt: `Hi there! I work in ${userProfile.industry} too. What aspects of workplace communication would you like to practice?`,
-      category: 'Work'
-    };
-    
-    // Create general English learning topics
-    const generalTopics = [
+    // Create general English learning topics using AI
+    const generalScenarios = [
       {
         id: "topic_1",
         title: "Introduction and Personal Information",
-        prompt: `You are a friendly English conversation partner interested in helping the learner improve their speaking skills. Ask questions about personal information and hobbies in a way appropriate for their ${userProfile.currentLevel} level.`,
-        firstPrompt: "Hi there! I'm excited to practice English with you. Could you tell me a bit about yourself?",
-        category: "Personal Information"
+        myRole: "English learner",
+        otherRole: "Friendly conversation partner",
+        situation: `Helping an English learner improve conversation skills by asking questions about personal information and hobbies at ${userProfile.currentLevel} level`
       },
       {
         id: "topic_2",
         title: "Daily Routine",
-        prompt: `You are an English learner interested in talking about daily routines and habits. Keep the conversation at a ${userProfile.currentLevel} level.`,
-        firstPrompt: "I'd love to hear about your typical day. What does your daily routine look like?",
-        category: "Daily Life"
+        myRole: "English learner",
+        otherRole: "Someone interested in daily routines",
+        situation: `Talking about daily routines and habits at ${userProfile.currentLevel} level`
       },
       {
         id: "topic_3",
         title: "Weekend Activities",
-        prompt: `You are someone curious about how the learner spends their weekends. Keep questions appropriate for ${userProfile.currentLevel} level English.`,
-        firstPrompt: "What do you usually do on weekends? I'm curious to hear about your activities!",
-        category: "Leisure"
+        myRole: "English learner",
+        otherRole: "Someone curious about weekend activities",
+        situation: `Discussing weekend activities at ${userProfile.currentLevel} level`
       },
       {
         id: "topic_4",
         title: "Food and Cooking",
-        prompt: `You are someone interested in food and cooking. Ask about favorite foods, cooking experiences, and food preferences. Keep it at ${userProfile.currentLevel} level.`,
-        firstPrompt: "I love trying new foods! What's your favorite dish to cook or eat?",
-        category: "Food"
+        myRole: "English learner",
+        otherRole: "Someone interested in food and cooking",
+        situation: `Talking about favorite foods, cooking experiences, and food preferences at ${userProfile.currentLevel} level`
       },
       {
         id: "topic_5",
         title: "Travel Experiences",
-        prompt: `You are someone who loves to travel and hear about others' travel experiences. Ask about places visited, dream destinations, etc. Keep it at ${userProfile.currentLevel} level.`,
-        firstPrompt: "I'm planning a trip soon. Have you traveled anywhere interesting? I'd love to hear about it!",
-        category: "Travel"
+        myRole: "English learner",
+        otherRole: "Someone who loves to travel",
+        situation: `Discussing travel experiences and dream destinations at ${userProfile.currentLevel} level`
       }
     ];
     
-    // Combine all topics
-    const allTopics = [...generalTopics, industryTopic, ...interestBasedTopics];
+    // Generate AI topics for general scenarios
+    for (const scenario of generalScenarios) {
+      try {
+        const roleplayResult = await generateRoleplay(
+          scenario.myRole,
+          scenario.otherRole,
+          scenario.situation
+        );
+        
+        if (roleplayResult.success && roleplayResult.data) {
+          personalizedTopics.push({
+            id: scenario.id,
+            title: scenario.title,
+            prompt: roleplayResult.data.prompt,
+            firstPrompt: roleplayResult.data.firstPrompt,
+            category: scenario.title.includes("Introduction") ? "Personal Information" : 
+                     scenario.title.includes("Daily") ? "Daily Life" :
+                     scenario.title.includes("Weekend") ? "Leisure" :
+                     scenario.title.includes("Food") ? "Food" :
+                     scenario.title.includes("Travel") ? "Travel" : "General"
+          });
+        }
+      } catch (error) {
+        console.warn(`Failed to generate AI topic for ${scenario.title}:`, error.message);
+      }
+    }
     
-    // Fill up to 84 topics with variations
-    while (allTopics.length < 84) {
-      const baseTopic = generalTopics[allTopics.length % generalTopics.length];
-      allTopics.push({
+    // Fill up to 84 topics with variations if needed
+    while (personalizedTopics.length < 84) {
+      const baseTopic = personalizedTopics[personalizedTopics.length % Math.min(personalizedTopics.length, 10)];
+      personalizedTopics.push({
         ...baseTopic,
-        id: `topic_${allTopics.length + 1}`,
-        title: `${baseTopic.title} - Variation ${Math.floor(allTopics.length / generalTopics.length) + 1}`
+        id: `topic_${personalizedTopics.length + 1}`,
+        title: `${baseTopic.title} - Variation ${Math.floor(personalizedTopics.length / 10) + 1}`
       });
     }
     
     // Return only the first 84 topics
-    return allTopics.slice(0, 84);
+    return personalizedTopics.slice(0, 84);
     
   } catch (error) {
-    console.error('Error generating personalized course:', error);
+    console.error('Error generating personalized course with AI:', error);
     // Fallback to basic topics if AI generation fails
     return [
       {

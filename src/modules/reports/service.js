@@ -3,7 +3,8 @@
 
 const { 
   getDailyReport,
-  saveDailyReport
+  saveDailyReport,
+  getLatestConversations
 } = require('../../core/db/client');
 const { generateReport } = require('../../core/ai');
 
@@ -65,8 +66,6 @@ const createReportWithAttempts = async (userId) => {
     let result = null;
 
     // Get latest conversations (not just today's)
-    // This would typically be implemented with a database call
-    // For now, we'll simulate this
     const conversations = await getLatestConversations(userId, 10);
     
     if (!conversations || conversations.length === 0) {
@@ -144,12 +143,6 @@ const createReportWithAttempts = async (userId) => {
     console.error('Error in generate-report-with-attempts:', error);
     throw new Error(error.message || 'Failed to generate report');
   }
-};
-
-// Helper function to get latest conversations (this would be implemented in the repo layer)
-const getLatestConversations = async (userId, limit) => {
-  // This is a placeholder - in a real implementation, this would query the database
-  return [];
 };
 
 module.exports = {

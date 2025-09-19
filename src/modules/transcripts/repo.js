@@ -6,11 +6,12 @@ const { pool } = require('../../core/db/client');
 const storeTranscript = async (userId, transcript, roomName, sessionDuration, agentState) => {
   const client = await pool.connect();
   try {
+    // Updated query to match actual database schema (without agent_state column)
     const result = await client.query(`
-      INSERT INTO conversations (user_id, transcript, room_name, session_duration, agent_state, timestamp)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      INSERT INTO conversations (user_id, transcript, room_name, session_duration, timestamp)
+      VALUES ($1, $2, $3, $4, NOW())
       RETURNING *
-    `, [userId, transcript, roomName || null, sessionDuration || null, agentState || null]);
+    `, [userId, transcript, roomName || null, sessionDuration || null]);
 
     return result.rows[0];
   } finally {

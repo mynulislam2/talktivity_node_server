@@ -5,7 +5,7 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 
 // Configuration
-const BASE_URL = 'http://localhost:8085';
+const BASE_URL = 'http://localhost:8082';
 const TEST_USER = {
   email: `test_${uuidv4()}@example.com`,
   password: 'TestPassword123!',
@@ -75,28 +75,35 @@ const runComprehensiveTests = async () => {
   // Get profile
   await testRoute('GET', '/api/auth/profile', null, { Authorization: `Bearer ${authToken}` }, 'Get User Profile');
 
-  // 3. Onboarding tests (if onboarding data is needed for personalized course)
+  // 3. Onboarding tests (submit onboarding data)
   console.log('\n📋 Onboarding Tests:');
   const onboardingData = {
-    skillToImprove: "speaking",
-    languageStatement: "beginner",
+    user_id: userId,
+    skill_to_improve: "speaking",
+    language_statement: "beginner",
     industry: "technology",
-    speakingFeelings: "nervous",
-    speakingFrequency: "rarely",
-    mainGoal: "confidence",
+    speaking_feelings: "nervous",
+    speaking_frequency: "rarely",
+    main_goal: "confidence",
     gender: "male",
-    currentLevel: "A2",
-    nativeLanguage: "Spanish",
+    current_level: "A2",
+    native_language: "Spanish",
+    current_learning_methods: ["apps", "classes"],
+    known_words_1: ["hello", "goodbye"],
+    known_words_2: ["cat", "dog"],
     interests: ["technology", "sports", "music"],
-    englishStyle: "casual",
-    tutorStyle: ["friendly", "patient"],
-    knownWords1: ["hello", "goodbye"],
-    knownWords2: ["cat", "dog"],
-    currentLearningMethods: ["apps", "classes"]
+    english_style: "casual",
+    tutor_style: ["friendly", "patient"]
   };
 
-  // Note: We're not actually submitting onboarding data in this test
-  // but we're showing what data would be used for personalized course generation
+  // Submit onboarding data
+  const onboardingResponse = await testRoute('POST', '/api/onboarding', onboardingData, { Authorization: `Bearer ${authToken}` }, 'Submit Onboarding Data');
+  
+  if (onboardingResponse && onboardingResponse.success) {
+    console.log('✅ Onboarding data submitted successfully');
+  } else {
+    console.log('❌ Onboarding data submission failed');
+  }
 
   // 4. Course initialization test (this will test the personalized course generation)
   console.log('\n🎓 Course Tests:');

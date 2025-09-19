@@ -2,7 +2,7 @@
 // Quiz business logic
 
 const { generateQuiz, generateListeningQuiz } = require('../../core/ai');
-const db = require('../../core/db/client');
+const { getLatestConversations } = require('../../core/db/client');
 
 // Generate a quiz with attempts logic
 const createQuizWithAttempts = async (userId) => {
@@ -191,26 +191,6 @@ const createListeningQuizWithAttempts = async (userId) => {
   } catch (error) {
     console.error('Error in generate-listening-quiz-with-attempts:', error);
     throw new Error(error.message || 'Failed to generate listening quiz');
-  }
-};
-
-// Helper function to get latest conversations (this would be implemented in the repo layer)
-const getLatestConversations = async (userId, limit) => {
-  let client;
-  try {
-    client = await db.pool.connect();
-    
-    const result = await client.query(
-      `SELECT transcript FROM conversations 
-       WHERE user_id = $1 
-       ORDER BY timestamp DESC 
-       LIMIT $2`,
-      [userId, limit]
-    );
-    
-    return result.rows;
-  } finally {
-    if (client) client.release();
   }
 };
 
