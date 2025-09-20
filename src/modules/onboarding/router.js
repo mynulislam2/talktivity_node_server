@@ -1,19 +1,28 @@
 // src/modules/onboarding/router.js
-// Onboarding routes
-
 const express = require('express');
 const router = express.Router();
 
-// Import the authentication middleware
-const { authenticateToken } = require('../core/http/middlewares/auth');
+// ✅ CORRECTED IMPORT - Fixed path to auth middleware
+const { authenticateToken } = require('../../core/http/middlewares/auth');
 
-// Import the onboarding controller
-const { saveOnboardingData, getOnboardingData } = require('./controller');
+// Import controllers
+const {
+  saveOnboardingDataController,
+  saveOnboardingDataTestController,
+  getOwnOnboardingData,
+  getOnboardingDataByUserId
+} = require('./controller');
 
-// POST /api/onboarding - Save or update onboarding data (with authentication)
-router.post('/onboarding', authenticateToken, saveOnboardingData);
+// POST /api/onboarding - Save or update user's own onboarding data
+router.post('/onboarding', authenticateToken, saveOnboardingDataController);
 
-// GET /api/onboarding/:userId - Get onboarding data for a specific user
-router.get('/onboarding/:userId', authenticateToken, getOnboardingData);
+// POST /api/onboarding/test - Test endpoint for onboarding data
+router.post('/onboarding/test', authenticateToken, saveOnboardingDataTestController);
+
+// GET /api/onboarding - Get authenticated user's own onboarding data
+router.get('/onboarding', authenticateToken, getOwnOnboardingData);
+
+// GET /api/onboarding/user/:user_id - Get onboarding data by specific user ID (admin/teacher access)
+router.get('/onboarding/user/:user_id', authenticateToken, getOnboardingDataByUserId);
 
 module.exports = router;
