@@ -4,14 +4,16 @@
 const express = require('express');
 const router = express.Router();
 
-const { authenticateToken } = require('../../core/http/middlewares/auth');
-const { 
-  saveOnboarding,
-  getOnboarding
-} = require('./controller');
+// Import the authentication middleware
+const { authenticateToken } = require('../core/http/middlewares/auth');
 
-// Public routes
-router.post('/', authenticateToken, saveOnboarding);
-router.get('/', authenticateToken, getOnboarding);
+// Import the onboarding controller
+const { saveOnboardingData, getOnboardingData } = require('./controller');
+
+// POST /api/onboarding - Save or update onboarding data (with authentication)
+router.post('/onboarding', authenticateToken, saveOnboardingData);
+
+// GET /api/onboarding/:userId - Get onboarding data for a specific user
+router.get('/onboarding/:userId', authenticateToken, getOnboardingData);
 
 module.exports = router;
