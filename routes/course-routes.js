@@ -753,11 +753,11 @@ router.post(
     } catch (error) {
       console.error("Error starting user speaking session:", error);
       res
-        .status(500)
-        .json({
-          success: false,
-          error: "Failed to start user speaking session",
-        });
+      .status(500)
+      .json({
+        success: false,
+        error: "Failed to start user speaking session",
+      });
     } finally {
       if (client) client.release();
     }
@@ -784,11 +784,11 @@ router.post(
 
       if (sessionResult.rows.length === 0) {
         return res
-          .status(400)
-          .json({
-            success: false,
-            error: "No active user speaking session found",
-          });
+        .status(400)
+        .json({
+          success: false,
+          error: "No active user speaking session found",
+        });
       }
 
       const session = sessionResult.rows[0];
@@ -1955,19 +1955,45 @@ GENERATION RULES:
 8. Each 'firstPrompt' should be a creative, open-ended question or challenge.
 
 PERSONALIZATION FACTORS:
-- Skill to Improve: Focus topics and prompts on enhancing ${contextData.onboarding.skillToImprove}. For example, if it's grammar, include scenarios that require structured sentences; if vocabulary, introduce and encourage use of new words related to their known words.
-- Current Level: Tailor complexity to ${contextData.onboarding.currentLevel}. For beginners, use simple scenarios and vocabulary; for advanced, incorporate nuanced debates or simulations with idioms and advanced structures.
-- Native Language: Adapt examples and corrections considering influences from ${contextData.onboarding.nativeLanguage}. Avoid common interference errors (e.g., if native is Bangla, focus on article usage or verb tenses).
-- Industry: Integrate at least 2 topics with real-world ${contextData.onboarding.industry} scenarios, like professional meetings or client interactions, using industry-specific vocabulary.
-- Interests: Base at least 2 topics on ${contextData.onboarding.interests?.join(", ")}, remixing them into engaging activities (e.g., if interests include travel and food, create a role-play about planning a food tour).
-- Main Goal: Align all topics to support ${contextData.onboarding.mainGoal}, such as building confidence for work conversations or travel ease, by choosing formats that directly practice that goal.
-- Speaking Feelings: Adjust encouragement based on ${contextData.onboarding.speakingFeelings}; if anxious, use gentle, supportive prompts; if confident, challenge with more complex interactions.
-- Speaking Frequency: If low (${contextData.onboarding.speakingFrequency}), start with basic daily scenarios to build habit; if high, focus on refinement and advanced fluency.
-- Current Learning Methods: Incorporate elements from ${contextData.onboarding.currentLearningMethods?.join(", ")}, like app-style quizzes in prompts or video-inspired role-plays.
-- Known Words (Set 1): Use and build upon ${contextData.onboarding.knownWords1?.join(", ")} in prompts, encouraging expansion to related vocabulary.
-- Known Words (Set 2): Integrate ${contextData.onboarding.knownWords2?.join(", ")} into scenarios, targeting fluency with familiar terms while introducing synonyms.
-- English Style: Match prompts to ${contextData.onboarding.englishStyle}, e.g., casual for everyday talk, business for professional simulations.
-- Tutor Style: Embody ${contextData.onboarding.tutorStyle?.join(", ")} in all prompts—e.g., if strict, include direct corrections; if encouraging, add positive feedback cues.
+- Skill to Improve: Focus topics and prompts on enhancing ${
+        contextData.onboarding.skillToImprove
+      }. For example, if it's grammar, include scenarios that require structured sentences; if vocabulary, introduce and encourage use of new words related to their known words.
+- Current Level: Tailor complexity to ${
+        contextData.onboarding.currentLevel
+      }. For beginners, use simple scenarios and vocabulary; for advanced, incorporate nuanced debates or simulations with idioms and advanced structures.
+- Native Language: Adapt examples and corrections considering influences from ${
+        contextData.onboarding.nativeLanguage
+      }. Avoid common interference errors (e.g., if native is Bangla, focus on article usage or verb tenses).
+- Industry: Integrate at least 2 topics with real-world ${
+        contextData.onboarding.industry
+      } scenarios, like professional meetings or client interactions, using industry-specific vocabulary.
+- Interests: Base at least 2 topics on ${contextData.onboarding.interests?.join(
+        ", "
+      )}, remixing them into engaging activities (e.g., if interests include travel and food, create a role-play about planning a food tour).
+- Main Goal: Align all topics to support ${
+        contextData.onboarding.mainGoal
+      }, such as building confidence for work conversations or travel ease, by choosing formats that directly practice that goal.
+- Speaking Feelings: Adjust encouragement based on ${
+        contextData.onboarding.speakingFeelings
+      }; if anxious, use gentle, supportive prompts; if confident, challenge with more complex interactions.
+- Speaking Frequency: If low (${
+        contextData.onboarding.speakingFrequency
+      }), start with basic daily scenarios to build habit; if high, focus on refinement and advanced fluency.
+- Current Learning Methods: Incorporate elements from ${contextData.onboarding.currentLearningMethods?.join(
+        ", "
+      )}, like app-style quizzes in prompts or video-inspired role-plays.
+- Known Words (Set 1): Use and build upon ${contextData.onboarding.knownWords1?.join(
+        ", "
+      )} in prompts, encouraging expansion to related vocabulary.
+- Known Words (Set 2): Integrate ${contextData.onboarding.knownWords2?.join(
+        ", "
+      )} into scenarios, targeting fluency with familiar terms while introducing synonyms.
+- English Style: Match prompts to ${
+        contextData.onboarding.englishStyle
+      }, e.g., casual for everyday talk, business for professional simulations.
+- Tutor Style: Embody ${contextData.onboarding.tutorStyle?.join(
+        ", "
+      )} in all prompts—e.g., if strict, include direct corrections; if encouraging, add positive feedback cues.
 
 ${strictJsonWarning}`,
     },
@@ -2033,10 +2059,10 @@ ${strictJsonWarning}`,
             console.warn("Retrying Groq request for better JSON...");
             await new Promise((res) => setTimeout(res, 2000));
             return await generatePersonalizedCourse(
-                onboardingData,
-                conversations,
-                retryCount + 1
-              );
+              onboardingData,
+              conversations,
+              retryCount + 1
+            );
           }
           throw new Error("No JSON array found in AI response after retries");
         }
@@ -2332,7 +2358,10 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
         SUM(speaking_duration_seconds) as total_speaking_time,
         AVG(speaking_duration_seconds) as avg_speaking_time,
         SUM(listening_duration_seconds) as total_listening_time,
-        AVG(listening_duration_seconds) as avg_listening_time
+        AVG(listening_duration_seconds) as avg_listening_time,
+        
+        -- Count of full 5-minute sessions (for bonus XP)
+        COUNT(CASE WHEN speaking_duration_seconds >= 299 THEN 1 END) as full_sessions
         
       FROM daily_progress 
       WHERE user_id = $1 AND course_id = $2
@@ -2435,6 +2464,23 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
 
     const analyticsData = analytics.rows[0];
     const currentStreak = streakResult.rows[0]?.current_streak || 0;
+    const totalSpeakingTime = parseInt(analyticsData.total_speaking_time) || 0;
+    const fullSessions = parseInt(analyticsData.full_sessions) || 0;
+    const totalQuizzes = parseInt(analyticsData.quiz_days) || 0;
+    const examsPassed = weeklyExams.rows.filter(
+      (exam) => exam.exam_score >= 60
+    ).length;
+
+    // Calculate XP using new formula:
+    // 2 XP per minute of actual speaking time + 10 XP bonus for each full 5-minute session
+    // + 15 XP per quiz + 50 XP per exam passed + 5 XP per streak day
+    const totalMinutes = Math.floor(totalSpeakingTime / 60);
+    const totalXP =
+      totalMinutes * 2 +
+      fullSessions * 10 +
+      totalQuizzes * 15 +
+      examsPassed * 50 +
+      currentStreak * 5;
 
     res.json({
       success: true,
@@ -2466,6 +2512,7 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
           last_quiz_date: analyticsData.last_quiz_date,
           last_listening_date: analyticsData.last_listening_date,
           last_listening_quiz_date: analyticsData.last_listening_quiz_date,
+          total_xp: totalXP, // Add XP to progress data
         },
         weeklyExams: weeklyExams.rows,
         speakingSessions: speakingSessions.rows,
@@ -2538,17 +2585,17 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
         -- High scores (80+)
         COUNT(CASE WHEN quiz_score >= 80 THEN 1 END) as high_scores,
         
-        -- Total sessions (calculated from speaking time: 1 session = 5 minutes = 300 seconds)
-        FLOOR(COALESCE(SUM(speaking_duration_seconds), 0) / 300) as total_sessions,
+        -- Total speaking time (in seconds)
+        COALESCE(SUM(speaking_duration_seconds), 0) as total_speaking_time,
+        
+        -- Count of full 5-minute sessions (for bonus XP)
+        COUNT(CASE WHEN speaking_duration_seconds >= 299 THEN 1 END) as full_sessions,
         
         -- Total quizzes
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as total_quizzes,
         
         -- Weekly exams passed
-        (SELECT COUNT(*) FROM weekly_exams WHERE user_id = $1 AND course_id = $2 AND exam_score >= 60) as exams_passed,
-        
-        -- Total speaking time
-        SUM(speaking_duration_seconds) as total_speaking_time
+        (SELECT COUNT(*) FROM weekly_exams WHERE user_id = $1 AND course_id = $2 AND exam_score >= 60) as exams_passed
         
       FROM daily_progress 
       WHERE user_id = $1 AND course_id = $2
@@ -2560,11 +2607,11 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
     const currentStreak = parseInt(achievementData.current_streak) || 0;
     const perfectScores = parseInt(achievementData.perfect_scores) || 0;
     const highScores = parseInt(achievementData.high_scores) || 0;
-    const totalSessions = parseInt(achievementData.total_sessions) || 0;
-    const totalQuizzes = parseInt(achievementData.total_quizzes) || 0;
-    const examsPassed = parseInt(achievementData.exams_passed) || 0;
     const totalSpeakingTime =
       parseInt(achievementData.total_speaking_time) || 0;
+    const fullSessions = parseInt(achievementData.full_sessions) || 0;
+    const totalQuizzes = parseInt(achievementData.total_quizzes) || 0;
+    const examsPassed = parseInt(achievementData.exams_passed) || 0;
 
     // Define achievement badges
     const badges = [
@@ -2601,12 +2648,12 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
         progress: Math.min(100, (highScores / 5) * 100),
       },
       {
-        id: 'dedicated_learner',
-        name: 'Dedicated Learner',
-        description: 'Complete 20 speaking sessions (100 minutes of speaking)',
-        icon: '📚',
-        unlocked: totalSessions >= 20,
-        progress: Math.min(100, (totalSessions / 20) * 100),
+        id: "dedicated_learner",
+        name: "Dedicated Learner",
+        description: "Complete 20 speaking sessions (100 minutes of speaking)",
+        icon: "📚",
+        unlocked: fullSessions >= 20,
+        progress: Math.min(100, (fullSessions / 20) * 100),
       },
       {
         id: "quiz_master",
@@ -2634,9 +2681,13 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
       },
     ];
 
-    // Calculate user level and XP
+    // Calculate user level and XP using new formula:
+    // 2 XP per minute of actual speaking time + 10 XP bonus for each full 5-minute session
+    // + 15 XP per quiz + 50 XP per exam passed + 5 XP per streak day
+    const totalMinutes = Math.floor(totalSpeakingTime / 60);
     const totalXP =
-      totalSessions * 10 +
+      totalMinutes * 2 +
+      fullSessions * 10 +
       totalQuizzes * 15 +
       examsPassed * 50 +
       currentStreak * 5;
@@ -2658,7 +2709,7 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
           currentStreak,
           perfectScores,
           highScores,
-          totalSessions,
+          totalSessions: fullSessions, // For backward compatibility
           totalQuizzes,
           examsPassed,
           totalSpeakingTime,
