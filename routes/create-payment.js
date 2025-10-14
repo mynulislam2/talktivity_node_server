@@ -18,9 +18,9 @@ router.post("/create-payment", async (req, res) => {
       order_amount: 1200.0, 
       currency: "BDT",
        order_description: "Talktivity Pro Subscription - 1 Month",
-      success_url: "http://localhost:3000/payment-success",
-      cancel_url: "http://localhost:3000/pricing",
-      fail_url: "http://localhost:3000/pricing",
+      success_url: "https://talktivity.app/payment-success",
+      cancel_url: "https://talktivity.app/pricing",
+      fail_url: "https://talktivity.app/pricing",
       customer: {
        name: customer?.name || "Talktivity User",
         email: customer?.email || "user@example.com",
@@ -37,7 +37,7 @@ router.post("/create-payment", async (req, res) => {
     // Simulate API response if SIMULATE_PAYMENT is true
     if (SIMULATE_PAYMENT) {
       // In simulation mode, return a fake payment URL
-      const fakePaymentUrl = `http://localhost:3000/payment-success?order_id=${requestData.order_id}&amount=${requestData.order_amount}&status=Success`;
+      const fakePaymentUrl = `https://talktivity.app/payment-success?order_id=${requestData.order_id}&amount=${requestData.order_amount}&status=Success`;
       console.log("SIMULATED: Generated fake payment URL:", fakePaymentUrl);
       return res.json({ payment_url: fakePaymentUrl });
     }
