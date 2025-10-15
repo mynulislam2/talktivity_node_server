@@ -6,13 +6,22 @@ const { authenticateToken } = require('./auth-routes'); // Adjust path if needed
 // Use native fetch (Node.js 18+) or install node-fetch: npm install node-fetch
 const fetch = require('node-fetch');
 
+// Define supported models from environment variables
 const SUPPORTED_MODELS = {
-  roleplay: 'deepseek-r1-distill-llama-70b',
-  report: 'deepseek-r1-distill-llama-70b',
-  quiz: 'deepseek-r1-distill-llama-70b',
-  listeningQuiz: 'deepseek-r1-distill-llama-70b',
-  fallback: 'deepseek-r1-distill-llama-70b'  // Smaller, always-available fallback
+  roleplay: process.env.MODEL_ROLEPLAY,
+  report: process.env.MODEL_REPORT,
+  quiz: process.env.MODEL_QUIZ,
+  listeningQuiz: process.env.MODEL_LISTENING_QUIZ,
+  fallback: process.env.MODEL_FALLBACK || 'meta-llama/llama-guard-4-12b' // Default fallback if not set
 };
+
+// Validate that all required model environment variables are set
+const missingModels = Object.keys(SUPPORTED_MODELS)
+  .filter(key => key !== 'fallback' && !SUPPORTED_MODELS[key]);
+if (missingModels.length > 0) {
+  console.error(`Missing model environment variables: ${missingModels.join(', ')}`);
+  throw new Error(`Required model environment variables are not set: ${missingModels.join(', ')}`);
+}
 
 const GROQ_API = process.env.GROQ_API_KEY;
 
@@ -114,6 +123,7 @@ const SAMPLE_REPORT = {
 
 if (!GROQ_API) {
   console.error('GROQ_API_KEY is not set in environment variables');
+  throw new Error('GROQ_API_KEY is not set in environment variables');
 }
 
 // POST /api/ai/generate-roleplay - Proxy for generating roleplay prompt and firstPrompt
@@ -161,8 +171,6 @@ Output:
       response_format: { type: "json_object" },
     };
 
-    
-
     const groqResponse = await fetch(groqApiUrl, {
       method: "POST",
       headers: {
@@ -172,17 +180,15 @@ Output:
       body: JSON.stringify(groqPayload),
     });
 
-    console.log("groq response: ", groqResponse)
+    console.log("groq response: ", groqResponse);
 
     if (!groqResponse.ok) {
       const errorData = await groqResponse.json().catch(() => ({}));
-      console.log("error data: ", errorData)
+      console.log("error data: ", errorData);
       throw new Error(
         `Groq API error! Status: ${groqResponse.status}. Details: ${errorData.error?.message || groqResponse.statusText}`
       );
     }
-
-
 
     const groqResult = await groqResponse.json();
     const aiResponseContent = groqResult.choices[0].message.content;
@@ -628,7 +634,7 @@ JSON OUTPUT RULES:
       );
     }
 
-    const groqResult = await groqResponse.json();
+    const groqResult = await groqResult.json();
     const contentString = groqResult.choices[0]?.message?.content;
 
     if (!contentString) {
@@ -844,7 +850,7 @@ QUALITY STANDARDS:
     ];
 
     const groqPayload = {
-      model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
+      model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
       messages: formattedMessages,
       temperature: 0.7,
       max_tokens: 2000,
@@ -1565,6 +1571,8 @@ QUALITY STANDARDS:
           },
           body: JSON.stringify(groqPayload),
         });
+
+        console.log("groq response:", groqResponse);
 
         if (!groqResponse.ok) {
           throw new Error(`Groq API error: ${groqResponse.status}`);
