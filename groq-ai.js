@@ -24,7 +24,7 @@ Base your analysis ONLY on the provided conversation turns. Output valid JSON on
   ];
 
   const payload = {
-    model: "deepseek-r1-distill-llama-70b",
+    model: "openai/gpt-oss-120b",
     messages: formattedMessages,
     temperature: 0.7,
     max_tokens: 512,
