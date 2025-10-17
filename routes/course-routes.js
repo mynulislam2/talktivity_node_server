@@ -1675,7 +1675,7 @@ router.get("/reports/monthly", authenticateToken, async (req, res) => {
           ...allMessages,
         ];
         const payload = {
-          model: "deepseek-r1-distill-llama-70b",
+          model: "openai/gpt-oss-120b",
           messages: formattedMessages,
           temperature: 0.7,
           max_tokens: 1024,
@@ -2006,7 +2006,7 @@ ${strictJsonWarning}`,
   ];
 
   const payload = {
-    model: "deepseek-r1-distill-llama-70b",
+    model: "openai/gpt-oss-120b",
     messages: messages,
     temperature: 1,
     max_tokens: 40000,

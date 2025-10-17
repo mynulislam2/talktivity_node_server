@@ -147,6 +147,7 @@ const leaderboardRoutes = require('./routes/leaderboard-routes');
 const aiRoutes = require('./routes/ai-routes');
 const vocabularyRoutes = require('./routes/vocabulary-routes');
 const paymentRoutes = require('./routes/create-payment');
+const subscriptionRoutes = require('./routes/subscription-routes');
 // Create Express app
 const app = express();
 const port = process.env.API_PORT || 8082;
@@ -356,6 +357,7 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/vocabulary', vocabularyRoutes);
 app.use('/api', paymentRoutes);
+app.use('/api', subscriptionRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

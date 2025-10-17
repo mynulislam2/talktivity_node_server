@@ -274,7 +274,7 @@ const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
         };
 
         const payload = {
-            model: "deepseek-r1-distill-llama-70b",
+            model: "openai/gpt-oss-120b",
             messages: [
                 {
                     role: "system",
