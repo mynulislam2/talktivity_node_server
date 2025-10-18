@@ -123,7 +123,43 @@ router.post('/start-session', authenticateToken, async (req, res) => {
     
     const subscription = await getUserSubscription(userId);
     if (!subscription) {
-      return res.status(403).json({ success: false, error: 'No active subscription' });
+      // Check if user can use onboarding test call
+      const client = await db.pool.connect();
+      try {
+        const result = await client.query(`
+          SELECT onboarding_test_call_used FROM users 
+          WHERE id = $1
+        `, [userId]);
+        
+        const user = result.rows[0];
+        const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
+        
+        if (hasUsedOnboardingCall) {
+          return res.status(403).json({ 
+            success: false, 
+            error: 'Onboarding test call already used. Please subscribe for more calls.' 
+          });
+        }
+        
+        // Mark onboarding test call as used
+        await client.query(`
+          UPDATE users 
+          SET onboarding_test_call_used = TRUE 
+          WHERE id = $1
+        `, [userId]);
+        
+        // Return session ID for onboarding call
+        const sessionId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return res.json({ 
+          success: true, 
+          sessionId,
+          message: 'Onboarding test call started',
+          isOnboardingCall: true
+        });
+        
+      } finally {
+        client.release();
+      }
     }
     
     // Check if user is in free trial period
@@ -185,7 +221,20 @@ router.post('/end-session', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
     
-    // Update daily usage
+    // Check if this is an onboarding call
+    const isOnboardingCall = sessionId.startsWith('onboarding_');
+    
+    if (isOnboardingCall) {
+      // For onboarding calls, just log the usage but don't count against daily limits
+      console.log(`Onboarding call ended: ${durationSeconds}s for user ${userId}`);
+      return res.json({ 
+        success: true, 
+        message: 'Onboarding test call ended',
+        isOnboardingCall: true
+      });
+    }
+    
+    // For regular sessions, update daily usage
     await updateDailyUsage(userId, sessionType, durationSeconds);
     
     res.json({ success: true, message: 'Session ended and usage recorded' });
@@ -476,14 +525,42 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
     const subscription = await getUserSubscription(userId);
     
     if (!subscription) {
-      return res.json({ 
-        success: true, 
-        hasSubscription: false,
-        remainingTimeSeconds: 0,
-        dailyLimitSeconds: 0,
-        canStartCall: false,
-        message: 'No active subscription'
-      });
+      // Check if user has used their onboarding test call
+      const client = await db.pool.connect();
+      try {
+        const result = await client.query(`
+          SELECT onboarding_test_call_used FROM users 
+          WHERE id = $1
+        `, [userId]);
+        
+        const user = result.rows[0];
+        const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
+        
+        if (!hasUsedOnboardingCall) {
+          // Allow one 5-minute onboarding test call
+          return res.json({ 
+            success: true, 
+            hasSubscription: false,
+            remainingTimeSeconds: 5 * 60, // 5 minutes
+            dailyLimitSeconds: 5 * 60,
+            canStartCall: true,
+            isOnboardingCall: true,
+            message: 'Onboarding test call available'
+          });
+        } else {
+          // No more calls without subscription
+          return res.json({ 
+            success: true, 
+            hasSubscription: false,
+            remainingTimeSeconds: 0,
+            dailyLimitSeconds: 0,
+            canStartCall: false,
+            message: 'Onboarding test call already used. Please subscribe for more calls.'
+          });
+        }
+      } finally {
+        client.release();
+      }
     }
     
     const isFreeTrial = subscription.is_free_trial && 
