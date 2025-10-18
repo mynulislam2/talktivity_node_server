@@ -219,14 +219,42 @@ router.post('/end-session', authenticateToken, async (req, res) => {
     const isOnboardingCall = sessionId.startsWith('onboarding_');
     
     if (isOnboardingCall) {
-      // Mark onboarding call as used when session actually ends
+      // For onboarding calls, track lifetime usage
       const client = await db.pool.connect();
       try {
-        await client.query(`
-          UPDATE users 
-          SET onboarding_test_call_used = TRUE 
-          WHERE id = $1
-        `, [userId]);
+        // Check if user has already used their 5-minute lifetime limit
+        const lifetimeQuery = `
+          SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
+          FROM device_speaking_sessions 
+          WHERE user_id = $1
+        `;
+        const lifetimeResult = await client.query(lifetimeQuery, [userId]);
+        const lifetimeSeconds = lifetimeResult.rows[0]?.total_seconds || 0;
+        
+        if (lifetimeSeconds >= 5 * 60) {
+          // Mark onboarding call as used when lifetime limit is reached
+          await client.query(`
+            UPDATE users 
+            SET onboarding_test_call_used = TRUE 
+            WHERE id = $1
+          `, [userId]);
+          
+          return res.json({ 
+            success: true, 
+            message: 'Onboarding test call lifetime limit reached',
+            isOnboardingCall: true,
+            lifetimeLimitReached: true
+          });
+        }
+        
+        // If this session would exceed the lifetime limit, mark as used
+        if (lifetimeSeconds + durationSeconds >= 5 * 60) {
+          await client.query(`
+            UPDATE users 
+            SET onboarding_test_call_used = TRUE 
+            WHERE id = $1
+          `, [userId]);
+        }
       } finally {
         client.release();
       }
@@ -543,14 +571,43 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
         const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
         
         if (!hasUsedOnboardingCall) {
-          // Allow one 5-minute onboarding test call
+          // Check lifetime usage for onboarding call
+          const lifetimeQuery = `
+            SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
+            FROM device_speaking_sessions 
+            WHERE user_id = $1
+          `;
+          const lifetimeResult = await client.query(lifetimeQuery, [userId]);
+          const lifetimeSeconds = lifetimeResult.rows[0]?.total_seconds || 0;
+          const remainingLifetimeSeconds = Math.max(0, (5 * 60) - lifetimeSeconds);
+          
+          if (remainingLifetimeSeconds <= 0) {
+            // Mark onboarding call as used when lifetime limit is reached
+            await client.query(`
+              UPDATE users 
+              SET onboarding_test_call_used = TRUE 
+              WHERE id = $1
+            `, [userId]);
+            
+            return res.json({ 
+              success: true, 
+              hasSubscription: false,
+              remainingTimeSeconds: 0,
+              dailyLimitSeconds: 0,
+              canStartCall: false,
+              message: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.'
+            });
+          }
+          
+          // Allow onboarding call with remaining lifetime time
           return res.json({ 
             success: true, 
             hasSubscription: false,
-            remainingTimeSeconds: 5 * 60, // 5 minutes
+            remainingTimeSeconds: remainingLifetimeSeconds,
             dailyLimitSeconds: 5 * 60,
             canStartCall: true,
             isOnboardingCall: true,
+            lifetimeUsedSeconds: lifetimeSeconds,
             message: 'Onboarding test call available'
           });
         } else {
