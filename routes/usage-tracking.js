@@ -141,13 +141,7 @@ router.post('/start-session', authenticateToken, async (req, res) => {
           });
         }
         
-        // Mark onboarding test call as used
-        await client.query(`
-          UPDATE users 
-          SET onboarding_test_call_used = TRUE 
-          WHERE id = $1
-        `, [userId]);
-        
+        // Don't mark as used yet - only mark when session actually ends
         // Return session ID for onboarding call
         const sessionId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         return res.json({ 
@@ -225,6 +219,18 @@ router.post('/end-session', authenticateToken, async (req, res) => {
     const isOnboardingCall = sessionId.startsWith('onboarding_');
     
     if (isOnboardingCall) {
+      // Mark onboarding call as used when session actually ends
+      const client = await db.pool.connect();
+      try {
+        await client.query(`
+          UPDATE users 
+          SET onboarding_test_call_used = TRUE 
+          WHERE id = $1
+        `, [userId]);
+      } finally {
+        client.release();
+      }
+      
       // For onboarding calls, just log the usage but don't count against daily limits
       console.log(`Onboarding call ended: ${durationSeconds}s for user ${userId}`);
       return res.json({ 

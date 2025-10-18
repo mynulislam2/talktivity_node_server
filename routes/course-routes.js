@@ -472,13 +472,7 @@ router.post("/courses/speaking/start", authenticateToken, async (req, res) => {
 
     // For onboarding calls, skip course-based checks
     if (!course && !hasUsedOnboardingCall) {
-      // Mark onboarding call as used
-      await client.query(`
-        UPDATE users 
-        SET onboarding_test_call_used = TRUE 
-        WHERE id = $1
-      `, [userId]);
-      
+      // Don't mark as used yet - only mark when session actually ends
       res.json({
         success: true,
         message: "Onboarding speaking session started",
@@ -561,8 +555,15 @@ router.post("/courses/speaking/end", authenticateToken, async (req, res) => {
       [userId, today]
     );
     
-    // For onboarding calls without course, just return success
-    if (!hasActiveCourse && hasUsedOnboardingCall) {
+    // For onboarding calls without course, mark as used and return success
+    if (!hasActiveCourse && !hasUsedOnboardingCall) {
+      // Mark onboarding call as used when session actually ends
+      await client.query(`
+        UPDATE users 
+        SET onboarding_test_call_used = TRUE 
+        WHERE id = $1
+      `, [userId]);
+      
       return res.json({
         success: true,
         message: "Onboarding speaking session ended",
