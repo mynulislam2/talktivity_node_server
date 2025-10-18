@@ -442,18 +442,56 @@ router.post("/courses/speaking/start", authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const today = new Date().toISOString().split("T")[0];
 
+    // Check if user has used onboarding test call
+    const userResult = await client.query(`
+      SELECT onboarding_test_call_used FROM users 
+      WHERE id = $1
+    `, [userId]);
+    
+    const user = userResult.rows[0];
+    const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
+    const hasActiveCourse = false;
+
     // Get user's active course
     const courseResult = await client.query(
       "SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true",
       [userId]
     );
-    if (courseResult.rows.length === 0) {
+    
+    let course = null;
+    if (courseResult.rows.length > 0) {
+      course = courseResult.rows[0];
+    } else if (!hasUsedOnboardingCall) {
+      // Allow onboarding call without course
+      console.log("Allowing onboarding call without course for user:", userId);
+    } else {
       return res
         .status(404)
         .json({ success: false, error: "No active course found" });
     }
-    const course = courseResult.rows[0];
 
+    // For onboarding calls, skip course-based checks
+    if (!course && !hasUsedOnboardingCall) {
+      // Mark onboarding call as used
+      await client.query(`
+        UPDATE users 
+        SET onboarding_test_call_used = TRUE 
+        WHERE id = $1
+      `, [userId]);
+      
+      res.json({
+        success: true,
+        message: "Onboarding speaking session started",
+        data: {
+          startTime: new Date(),
+          timeLimit: 5 * 60, // 5 minutes for onboarding
+          isOnboardingCall: true
+        },
+      });
+      return;
+    }
+
+    // For regular course-based sessions
     // Sum all speaking session durations for today
     const sumResult = await client.query(
       "SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM speaking_sessions WHERE user_id = $1 AND date = $2",
@@ -500,11 +538,41 @@ router.post("/courses/speaking/end", authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const today = new Date().toISOString().split("T")[0];
 
+    // Check if this is an onboarding call (no course but onboarding call used)
+    const userResult = await client.query(`
+      SELECT onboarding_test_call_used FROM users 
+      WHERE id = $1
+    `, [userId]);
+    
+    const user = userResult.rows[0];
+    const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
+    
+    // Check if user has active course
+    const courseResult = await client.query(
+      "SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true",
+      [userId]
+    );
+    
+    const hasActiveCourse = courseResult.rows.length > 0;
+
     // Find the latest speaking session for today that has no end_time
     const sessionResult = await client.query(
       "SELECT * FROM speaking_sessions WHERE user_id = $1 AND date = $2 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1",
       [userId, today]
     );
+    
+    // For onboarding calls without course, just return success
+    if (!hasActiveCourse && hasUsedOnboardingCall) {
+      return res.json({
+        success: true,
+        message: "Onboarding speaking session ended",
+        data: {
+          completed: true,
+          isOnboardingCall: true
+        },
+      });
+    }
+    
     if (sessionResult.rows.length === 0) {
       return res
         .status(400)
