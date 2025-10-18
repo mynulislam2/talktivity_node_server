@@ -5,10 +5,18 @@
 ALTER TABLE device_speaking_sessions 
 ADD COLUMN IF NOT EXISTS user_id INTEGER NULL;
 
--- Add foreign key constraint
-ALTER TABLE device_speaking_sessions 
-ADD CONSTRAINT IF NOT EXISTS fk_device_speaking_sessions_user_id 
-FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+-- Add foreign key constraint (check if constraint doesn't exist first)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'fk_device_speaking_sessions_user_id'
+    ) THEN
+        ALTER TABLE device_speaking_sessions 
+        ADD CONSTRAINT fk_device_speaking_sessions_user_id 
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- Create index for user_id queries
 CREATE INDEX IF NOT EXISTS idx_device_speaking_sessions_user_id ON device_speaking_sessions(user_id);
