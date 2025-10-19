@@ -167,7 +167,7 @@ Output:
       model: SUPPORTED_MODELS.roleplay || SUPPORTED_MODELS.fallback,
       messages: formattedMessages,
       temperature: 0.7,
-      max_tokens: 500,
+      max_tokens: 8192,
       response_format: { type: "json_object" },
     };
 
@@ -347,7 +347,7 @@ QUALITY ASSURANCE:
       model: SUPPORTED_MODELS.report || SUPPORTED_MODELS.fallback,
       messages: formattedMessages,
       temperature: 1,
-      max_tokens: 4096,
+      max_tokens: 8192,
     };
 
     const groqResponse = await fetch(groqApiUrl, {
@@ -604,7 +604,7 @@ JSON OUTPUT RULES:
       model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
       messages: formattedMessages,
       temperature: 1,
-      max_tokens: 20000,
+      max_tokens: 8192,
     };
 
     console.log('Sending Groq request with payload:', {
@@ -853,7 +853,7 @@ QUALITY STANDARDS:
       model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
       messages: formattedMessages,
       temperature: 0.7,
-      max_tokens: 2000,
+      max_tokens: 8192,
       response_format: { "type": "json_object" },
     };
 
@@ -1141,7 +1141,7 @@ QUALITY STANDARDS:
           model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
           messages: formattedMessages,
           temperature: 0.7,
-          max_tokens: 2000,
+          max_tokens: 8192,
           response_format: { "type": "json_object" },
         };
 
@@ -1330,7 +1330,7 @@ CRITICAL WARNING: The sample above is ONLY for showing the required JSON structu
           model: SUPPORTED_MODELS.report || SUPPORTED_MODELS.fallback,
           messages: formattedMessages,
           temperature: 0.7,
-          max_tokens: 4000,
+          max_tokens: 8192,
           response_format: { "type": "json_object" },
         };
 
@@ -1342,12 +1342,14 @@ CRITICAL WARNING: The sample above is ONLY for showing the required JSON structu
           },
           body: JSON.stringify(groqPayload),
         });
-
+console.log("groqResponse:", groqResponse);
         if (!groqResponse.ok) {
+          console.log("groqResponse.status:", groqResponse.status);
           throw new Error(`Groq API error: ${groqResponse.status}`);
         }
 
         const groqResult = await groqResponse.json();
+        console.log("groqResult:", groqResult);
         const contentString = groqResult.choices[0].message.content;
 
         if (!contentString) {
@@ -1432,7 +1434,7 @@ router.post('/generate-quiz-with-attempts', authenticateToken, async (req, res) 
             'Authorization': req.headers.authorization
           }
         });
-
+console.log("response:", response);
         if (!response.ok) {
           throw new Error(`Failed to fetch conversations: ${response.status}`);
         }
@@ -1559,7 +1561,7 @@ QUALITY STANDARDS:
           model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
           messages: formattedMessages,
           temperature: 0.7,
-          max_tokens: 3000,
+          max_tokens: 8192,
           response_format: { "type": "json_object" },
         };
 
