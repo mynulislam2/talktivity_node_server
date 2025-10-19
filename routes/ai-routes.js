@@ -1004,7 +1004,7 @@ router.post('/generate-listening-quiz-with-attempts', authenticateToken, async (
         console.log(`Listening quiz generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
 
         // Get latest conversations (not just today's)
-        const response = await fetch(`http://localhost:8082/api/users/${userId}/latest-conversations?limit=10`, {
+        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
           headers: {
             'Authorization': req.headers.authorization
           }
@@ -1253,7 +1253,7 @@ router.post('/generate-report-with-attempts', authenticateToken, async (req, res
         console.log(`Report generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
 
         // Get latest conversations (not just today's)
-        const response = await fetch(`http://localhost:8082/api/users/${userId}/latest-conversations?limit=10`, {
+        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
           headers: {
             'Authorization': req.headers.authorization
           }
@@ -1427,7 +1427,7 @@ router.post('/generate-quiz-with-attempts', authenticateToken, async (req, res) 
         console.log(`Quiz generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
 
         // Get latest conversations (not just today's)
-        const response = await fetch(`http://localhost:8082/api/users/${userId}/latest-conversations?limit=10`, {
+        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
           headers: {
             'Authorization': req.headers.authorization
           }

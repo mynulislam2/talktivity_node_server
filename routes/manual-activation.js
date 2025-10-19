@@ -3,23 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { authenticateToken } = require('./auth-routes');
 
-// Test endpoint to check if manual activation routes are working
-router.get('/manual-activate-subscription', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Manual activation endpoint is accessible',
-    method: 'GET'
-  });
-});
 
-// Test POST endpoint without authentication
-router.post('/test-manual-activation', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Manual activation POST endpoint is accessible',
-    method: 'POST'
-  });
-});
 
 // Manual subscription activation endpoint (for testing/fallback)
 router.post('/manual-activate-subscription', authenticateToken, async (req, res) => {
@@ -29,13 +13,10 @@ router.post('/manual-activate-subscription', authenticateToken, async (req, res)
     client = await db.pool.connect();
     
     console.log(`🔄 Manual activation requested for user ${userId}`);
-    console.log(`📊 Manual activation: Request method: ${req.method}`);
-    console.log(`📊 Manual activation: Request URL: ${req.url}`);
-    console.log(`📊 Manual activation: Request headers:`, req.headers);
     
     // Find pending subscription for this user
     const result = await client.query(`
-      SELECT s.*, sp.plan_type, sp.duration_months
+      SELECT s.*, sp.plan_type, sp.duration_days
       FROM subscriptions s
       JOIN subscription_plans sp ON s.plan_id = sp.id
       WHERE s.user_id = $1 AND s.status = 'pending'
@@ -46,7 +27,7 @@ router.post('/manual-activate-subscription', authenticateToken, async (req, res)
     if (result.rows.length === 0) {
       return res.status(404).json({ 
         success: false, 
-        error: 'No pending subscription found' 
+        error: 'No pending subscription found'
       });
     }
     
@@ -55,7 +36,7 @@ router.post('/manual-activate-subscription', authenticateToken, async (req, res)
     // Calculate subscription dates
     const startDate = new Date();
     const endDate = new Date();
-    endDate.setMonth(startDate.getMonth() + subscription.duration_months);
+    endDate.setDate(startDate.getDate() + subscription.duration_days);
     
     // Update subscription to active
     await client.query(`
@@ -79,10 +60,10 @@ router.post('/manual-activate-subscription', authenticateToken, async (req, res)
     });
     
   } catch (error) {
-    console.error('Manual activation error:', error);
+    console.error('❌ Manual activation error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to activate subscription' 
+      error: 'Failed to activate subscription'
     });
   } finally {
     if (client) client.release();
