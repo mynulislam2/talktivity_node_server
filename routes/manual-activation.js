@@ -3,6 +3,24 @@ const router = express.Router();
 const db = require('../db');
 const { authenticateToken } = require('./auth-routes');
 
+// Test endpoint to check if manual activation routes are working
+router.get('/manual-activate-subscription', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Manual activation endpoint is accessible',
+    method: 'GET'
+  });
+});
+
+// Test POST endpoint without authentication
+router.post('/test-manual-activation', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Manual activation POST endpoint is accessible',
+    method: 'POST'
+  });
+});
+
 // Manual subscription activation endpoint (for testing/fallback)
 router.post('/manual-activate-subscription', authenticateToken, async (req, res) => {
   let client;
@@ -11,6 +29,9 @@ router.post('/manual-activate-subscription', authenticateToken, async (req, res)
     client = await db.pool.connect();
     
     console.log(`🔄 Manual activation requested for user ${userId}`);
+    console.log(`📊 Manual activation: Request method: ${req.method}`);
+    console.log(`📊 Manual activation: Request URL: ${req.url}`);
+    console.log(`📊 Manual activation: Request headers:`, req.headers);
     
     // Find pending subscription for this user
     const result = await client.query(`
