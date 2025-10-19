@@ -316,6 +316,7 @@ router.get('/subscription/status', authenticateToken, async (req, res) => {
   let client;
   try {
     const userId = req.user.userId;
+    console.log(`🔄 Backend: Checking subscription status for user ${userId}`);
     
     client = await db.pool.connect();
     const result = await client.query(`
@@ -327,8 +328,15 @@ router.get('/subscription/status', authenticateToken, async (req, res) => {
       LIMIT 1
     `, [userId]);
     
+    console.log(`📊 Backend: Found ${result.rows.length} active subscriptions for user ${userId}`);
+    if (result.rows.length > 0) {
+      console.log(`📊 Backend: Subscription details:`, result.rows[0]);
+    }
+    
     const subscription = result.rows[0];
     const isActive = !!subscription;
+    
+    console.log(`📊 Backend: isActive = ${isActive}`);
     
     res.json({ 
       success: true, 

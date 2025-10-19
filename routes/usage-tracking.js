@@ -283,18 +283,24 @@ router.post('/end-session', authenticateToken, async (req, res) => {
 router.post('/start-free-trial', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    console.log(`🔄 Backend: Starting free trial for user ${userId}`);
     
     // Check if user can use free trial
     const canTrial = await canUseFreeTrial(userId);
     if (!canTrial) {
+      console.log(`❌ Backend: User ${userId} cannot use free trial (already used)`);
       return res.status(403).json({ 
         success: false, 
         error: 'Free trial already used. Please purchase a subscription.' 
       });
     }
     
+    console.log(`✅ Backend: User ${userId} can use free trial, starting...`);
+    
     // Start free trial
     await startFreeTrial(userId);
+    
+    console.log(`✅ Backend: Free trial started successfully for user ${userId}`);
     
     res.json({ 
       success: true, 
@@ -303,7 +309,7 @@ router.post('/start-free-trial', authenticateToken, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error starting free trial:', error);
+    console.error('❌ Backend: Error starting free trial:', error);
     res.status(500).json({ success: false, error: 'Failed to start free trial' });
   }
 });
