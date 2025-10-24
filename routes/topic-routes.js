@@ -170,19 +170,68 @@ router.post('/topics/bulk', authenticateToken, async (req, res) => {
     }
 });
 
-// GET /api/topics - Get all topic categories
+// GET /api/topics - Get all topic categories with subscription-based limits
 router.get('/topics', authenticateToken, async (req, res) => {
     let client;
     try {
+        const userId = req.user.userId;
         client = await pool.connect();
+        
+        // Get user's subscription to determine limits
+        const subscriptionResult = await client.query(`
+            SELECT s.*, sp.plan_type, sp.features
+            FROM subscriptions s
+            JOIN subscription_plans sp ON s.plan_id = sp.id
+            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+            ORDER BY s.created_at DESC
+            LIMIT 1
+        `, [userId]);
+        
+        const subscription = subscriptionResult.rows[0];
+        const isFreeTrial = subscription && subscription.is_free_trial && 
+                           subscription.free_trial_started_at && 
+                           new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
+        
+        // Determine if user has Basic plan (including free trial) or Pro plan
+        const isBasicPlan = !subscription || 
+                           subscription.plan_type === 'Basic' || 
+                           subscription.plan_type === 'FreeTrial' || 
+                           isFreeTrial;
+        
         const result = await client.query(`
             SELECT id, category_name, topics, created_at, updated_at
             FROM topic_categories
             ORDER BY category_name ASC
         `);
+        
+        // Apply subscription-based filtering
+        const filteredData = result.rows.map(category => {
+            const topics = category.topics || [];
+            let filteredTopics = topics;
+            
+            if (isBasicPlan) {
+                // Basic plan: limit to 5 topics per category
+                filteredTopics = topics.slice(0, 5);
+            }
+            // Pro plan: return all topics (no filtering needed)
+            
+            return {
+                ...category,
+                topics: filteredTopics,
+                totalTopics: topics.length,
+                displayedTopics: filteredTopics.length,
+                planType: isBasicPlan ? 'Basic' : 'Pro'
+            };
+        });
+        
         res.status(200).json({
             success: true,
-            data: result.rows
+            data: filteredData,
+            subscription: {
+                planType: isBasicPlan ? 'Basic' : 'Pro',
+                isFreeTrial: isFreeTrial,
+                hasActiveSubscription: !!subscription
+            }
         });
     } catch (error) {
         console.error('Error fetching topic categories:', error);
@@ -195,26 +244,76 @@ router.get('/topics', authenticateToken, async (req, res) => {
     }
 });
 
-// GET /api/topics/:category_name - Get a specific topic category by name
+// GET /api/topics/:category_name - Get a specific topic category by name with subscription-based limits
 router.get('/topics/:category_name', authenticateToken, async (req, res) => {
     let client;
     try {
         const { category_name } = req.params;
+        const userId = req.user.userId;
+        
         if (!category_name) {
             return res.status(400).json({ success: false, error: 'Category name is required' });
         }
+        
         client = await pool.connect();
+        
+        // Get user's subscription to determine limits
+        const subscriptionResult = await client.query(`
+            SELECT s.*, sp.plan_type, sp.features
+            FROM subscriptions s
+            JOIN subscription_plans sp ON s.plan_id = sp.id
+            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+            ORDER BY s.created_at DESC
+            LIMIT 1
+        `, [userId]);
+        
+        const subscription = subscriptionResult.rows[0];
+        const isFreeTrial = subscription && subscription.is_free_trial && 
+                           subscription.free_trial_started_at && 
+                           new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
+        
+        // Determine if user has Basic plan (including free trial) or Pro plan
+        const isBasicPlan = !subscription || 
+                           subscription.plan_type === 'Basic' || 
+                           subscription.plan_type === 'FreeTrial' || 
+                           isFreeTrial;
+        
         const result = await client.query(`
             SELECT id, category_name, topics, created_at, updated_at
             FROM topic_categories
             WHERE category_name = $1
         `, [category_name]);
+        
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Topic category not found' });
         }
+        
+        const category = result.rows[0];
+        const topics = category.topics || [];
+        let filteredTopics = topics;
+        
+        if (isBasicPlan) {
+            // Basic plan: limit to 5 topics per category
+            filteredTopics = topics.slice(0, 5);
+        }
+        // Pro plan: return all topics (no filtering needed)
+        
+        const filteredCategory = {
+            ...category,
+            topics: filteredTopics,
+            totalTopics: topics.length,
+            displayedTopics: filteredTopics.length,
+            planType: isBasicPlan ? 'Basic' : 'Pro'
+        };
+        
         res.status(200).json({
             success: true,
-            data: result.rows[0]
+            data: filteredCategory,
+            subscription: {
+                planType: isBasicPlan ? 'Basic' : 'Pro',
+                isFreeTrial: isFreeTrial,
+                hasActiveSubscription: !!subscription
+            }
         });
     } catch (error) {
         console.error(`Error fetching topic category '${req.params.category_name}':`, error);

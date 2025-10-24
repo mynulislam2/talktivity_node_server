@@ -146,8 +146,10 @@ const dmRoutes = require('./routes/dm');
 const leaderboardRoutes = require('./routes/leaderboard-routes');
 const aiRoutes = require('./routes/ai-routes');
 const vocabularyRoutes = require('./routes/vocabulary-routes');
-const paymentRoutes = require('./routes/create-payment');
+const securePaymentRoutes = require('./routes/secure-payment-routes');
 const subscriptionRoutes = require('./routes/subscription-routes');
+const usageTrackingRoutes = require('./routes/usage-tracking');
+const manualActivationRoutes = require('./routes/manual-activation');
 // Create Express app
 const app = express();
 const port = process.env.API_PORT || 8082;
@@ -356,8 +358,10 @@ app.use('/api/dms', dmRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/vocabulary', vocabularyRoutes);
-app.use('/api', paymentRoutes);
+app.use('/api', securePaymentRoutes);
 app.use('/api', subscriptionRoutes);
+app.use('/api/usage', usageTrackingRoutes);
+app.use('/api', manualActivationRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
