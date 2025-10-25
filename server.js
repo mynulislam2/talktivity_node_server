@@ -150,6 +150,7 @@ const securePaymentRoutes = require('./routes/secure-payment-routes');
 const subscriptionRoutes = require('./routes/subscription-routes');
 const usageTrackingRoutes = require('./routes/usage-tracking');
 const manualActivationRoutes = require('./routes/manual-activation');
+const reportRoutes = require('./routes/report-routes');
 // Create Express app
 const app = express();
 const port = process.env.API_PORT || 8082;
@@ -362,6 +363,7 @@ app.use('/api', securePaymentRoutes);
 app.use('/api', subscriptionRoutes);
 app.use('/api/usage', usageTrackingRoutes);
 app.use('/api', manualActivationRoutes);
+app.use('/api/report', reportRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

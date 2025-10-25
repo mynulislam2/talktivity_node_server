@@ -1391,6 +1391,18 @@ console.log("groqResponse:", groqResponse);
     }
 
     if (success && result) {
+      // Mark report as completed for this user
+      try {
+        const { pool } = require('../db/index');
+        await pool.query(
+          'UPDATE users SET report_completed = true, updated_at = NOW() WHERE id = $1',
+          [userId]
+        );
+        console.log(`✅ Marked report as completed for user ${userId}`);
+      } catch (updateError) {
+        console.error(`❌ Failed to mark report as completed for user ${userId}:`, updateError);
+      }
+      
       res.json({
         success: true,
         data: result,
