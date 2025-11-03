@@ -161,32 +161,32 @@ router.post('/start-session', authenticateToken, async (req, res) => {
                        subscription.free_trial_started_at && 
                        new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
     
-    // Get today's usage
-    const todayUsage = await getTodayUsage(userId);
-    const usedTime = todayUsage ? todayUsage.total_time_seconds : 0;
-    
-    // Calculate daily limit based on plan
-    let dailyLimitSeconds;
-    if (subscription.plan_type === 'FreeTrial' || isFreeTrial) {
-      dailyLimitSeconds = 5 * 60; // 5 minutes for free trial
-    } else if (subscription.plan_type === 'Basic') {
-      dailyLimitSeconds = 5 * 60; // 5 minutes for Basic
-    } else if (subscription.plan_type === 'Pro') {
-      dailyLimitSeconds = 60 * 60; // 1 hour for Pro
-    } else {
-      return res.status(403).json({ success: false, error: 'Invalid subscription plan' });
-    }
-    
-    // Check if user has exceeded daily limit
-    if (usedTime >= dailyLimitSeconds) {
-      return res.status(429).json({ 
-        success: false, 
-        error: 'Daily usage limit exceeded',
-        limit: dailyLimitSeconds,
-        used: usedTime,
-        remaining: Math.max(0, dailyLimitSeconds - usedTime)
-      });
-    }
+  // Centralized limits
+  const { computeRemainingForSession, getDailyPoolLimitSeconds } = require('../utils/timeLimits');
+  const todayUsage = await getTodayUsage(userId);
+  const dailyLimitSeconds = getDailyPoolLimitSeconds(subscription.plan_type, isFreeTrial);
+  if (!dailyLimitSeconds)
+    return res.status(403).json({ success: false, error: 'Invalid subscription plan' });
+
+  const remainingForSession = computeRemainingForSession(
+    subscription.plan_type,
+    isFreeTrial,
+    sessionType,
+    todayUsage
+  );
+
+  if (remainingForSession <= 0) {
+    const planText = subscription.plan_type === 'Pro' && sessionType === 'practice'
+      ? 'Practice session limit reached (5 minutes).'
+      : 'Daily usage limit exceeded.';
+    return res.status(429).json({ 
+      success: false,
+      error: planText,
+      limit: dailyLimitSeconds,
+      used: (todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0),
+      remaining: 0
+    });
+  }
     
     // Generate session ID for tracking
     const sessionId = `session_${userId}_${Date.now()}`;
@@ -195,8 +195,8 @@ router.post('/start-session', authenticateToken, async (req, res) => {
       success: true, 
       sessionId,
       dailyLimit: dailyLimitSeconds,
-      used: usedTime,
-      remaining: dailyLimitSeconds - usedTime
+      used: (todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0),
+      remaining: dailyLimitSeconds - ((todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0))
     });
     
   } catch (error) {
@@ -343,8 +343,22 @@ router.get('/status', authenticateToken, async (req, res) => {
       dailyLimitSeconds = 60 * 60; // 1 hour
     }
     
+    const practiceTime = todayUsage ? (todayUsage.practice_time_seconds || 0) : 0;
+    const roleplayTime = todayUsage ? (todayUsage.roleplay_time_seconds || 0) : 0;
     const usedTime = todayUsage ? todayUsage.total_time_seconds : 0;
-    const remainingTime = Math.max(0, dailyLimitSeconds - usedTime);
+    const remainingTime = Math.max(0, dailyLimitSeconds - (practiceTime + roleplayTime));
+    
+    // For Pro users: separate limits for practice and roleplay
+    let practiceRemaining = remainingTime;
+    let roleplayRemaining = remainingTime;
+    if (subscription.plan_type === 'Pro') {
+      const practiceLimitSeconds = 5 * 60; // 5 minutes max for practice
+      practiceRemaining = Math.max(0, practiceLimitSeconds - practiceTime);
+      
+      // Roleplay can use remaining time from 60-minute pool
+      const roleplayLimitSeconds = dailyLimitSeconds - practiceLimitSeconds; // 55 minutes
+      roleplayRemaining = Math.max(0, roleplayLimitSeconds - roleplayTime);
+    }
     
     res.json({
       success: true,
@@ -358,7 +372,16 @@ router.get('/status', authenticateToken, async (req, res) => {
         dailyLimit: dailyLimitSeconds,
         used: usedTime,
         remaining: remainingTime,
-        canUse: remainingTime > 0
+        canUse: remainingTime > 0,
+        // For Pro users, include separate practice and roleplay limits
+        ...(subscription.plan_type === 'Pro' ? {
+          practiceTime: practiceTime,
+          practiceRemaining: practiceRemaining,
+          roleplayTime: roleplayTime,
+          roleplayRemaining: roleplayRemaining,
+          practiceLimit: 5 * 60,
+          roleplayLimit: 55 * 60
+        } : {})
       }
     });
     
@@ -650,11 +673,33 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
     
     // Get today's usage
     const todayUsage = await getTodayUsage(userId);
-    const usedTimeSeconds = todayUsage ? (todayUsage.call_time_seconds || 0) + 
-                                           (todayUsage.practice_time_seconds || 0) + 
-                                           (todayUsage.roleplay_time_seconds || 0) : 0;
+    const practiceTimeSeconds = todayUsage ? (todayUsage.practice_time_seconds || 0) : 0;
+    const roleplayTimeSeconds = todayUsage ? (todayUsage.roleplay_time_seconds || 0) : 0;
+    const callTimeSeconds = todayUsage ? (todayUsage.call_time_seconds || 0) : 0;
+    const usedTimeSeconds = practiceTimeSeconds + roleplayTimeSeconds + callTimeSeconds;
     
-    const remainingTimeSeconds = Math.max(0, dailyLimitSeconds - usedTimeSeconds);
+    // For Pro users: separate limits for practice (5 min max) and roleplay (remaining from 60 min pool)
+    let remainingTimeSeconds;
+    let practiceRemainingSeconds;
+    let roleplayRemainingSeconds;
+    
+    if (subscription.plan_type === 'Pro') {
+      const practiceLimitSeconds = 5 * 60; // 5 minutes max for practice
+      practiceRemainingSeconds = Math.max(0, practiceLimitSeconds - practiceTimeSeconds);
+      
+      // Roleplay can use remaining time from 60-minute pool (after subtracting practice time)
+      const roleplayLimitSeconds = dailyLimitSeconds - practiceLimitSeconds; // 55 minutes
+      roleplayRemainingSeconds = Math.max(0, roleplayLimitSeconds - roleplayTimeSeconds);
+      
+      // Total remaining is for overall limit
+      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - (practiceTimeSeconds + roleplayTimeSeconds));
+    } else {
+      // Basic/FreeTrial: combined limit (practice + roleplay share 5 minutes)
+      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - (practiceTimeSeconds + roleplayTimeSeconds));
+      practiceRemainingSeconds = remainingTimeSeconds;
+      roleplayRemainingSeconds = remainingTimeSeconds;
+    }
+    
     const canStartCall = remainingTimeSeconds > 0;
     
     res.json({
@@ -668,7 +713,16 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
       canStartCall: canStartCall,
       remainingTimeFormatted: formatTime(remainingTimeSeconds),
       usedTimeFormatted: formatTime(usedTimeSeconds),
-      dailyLimitFormatted: formatTime(dailyLimitSeconds)
+      dailyLimitFormatted: formatTime(dailyLimitSeconds),
+      // For Pro users, include separate practice and roleplay limits
+      ...(subscription.plan_type === 'Pro' ? {
+        practiceTimeSeconds: practiceTimeSeconds,
+        practiceRemainingSeconds: practiceRemainingSeconds,
+        roleplayTimeSeconds: roleplayTimeSeconds,
+        roleplayRemainingSeconds: roleplayRemainingSeconds,
+        practiceLimitSeconds: 5 * 60,
+        roleplayLimitSeconds: 55 * 60
+      } : {})
     });
     
   } catch (error) {

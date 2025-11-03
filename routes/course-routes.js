@@ -486,16 +486,57 @@ router.post("/courses/speaking/start", authenticateToken, async (req, res) => {
     }
 
     // For regular course-based sessions
-    // Sum all speaking session durations for today
-    const sumResult = await client.query(
-      "SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM speaking_sessions WHERE user_id = $1 AND date = $2",
+    // Get user's subscription plan to determine daily limit
+    const subscriptionResult = await client.query(`
+      SELECT s.*, sp.plan_type, sp.features
+      FROM subscriptions s
+      JOIN subscription_plans sp ON s.plan_id = sp.id
+      WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+      ORDER BY s.end_date DESC
+      LIMIT 1
+    `, [userId]);
+    
+    const subscription = subscriptionResult.rows[0];
+    
+    // Check daily usage from daily_usage table (practice + roleplay)
+    const usageResult = await client.query(
+      "SELECT practice_time_seconds, roleplay_time_seconds FROM daily_usage WHERE user_id = $1 AND usage_date = $2",
       [userId, today]
     );
-    const totalSeconds = parseInt(sumResult.rows[0].total_seconds, 10);
-    if (totalSeconds >= 5 * 60) {
+    const todayUsage = usageResult.rows[0];
+    const practiceTime = todayUsage ? (todayUsage.practice_time_seconds || 0) : 0;
+    const roleplayTime = todayUsage ? (todayUsage.roleplay_time_seconds || 0) : 0;
+    const totalUsedTime = practiceTime + roleplayTime;
+    
+    // Calculate daily limit based on subscription plan
+    let dailyLimitSeconds;
+    if (!subscription) {
+      // No subscription - allow onboarding calls only
+      dailyLimitSeconds = 5 * 60; // 5 minutes for onboarding
+    } else {
+      const isFreeTrial = subscription.is_free_trial && 
+                         subscription.free_trial_started_at && 
+                         new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
+      
+      if (subscription.plan_type === 'FreeTrial' || isFreeTrial) {
+        dailyLimitSeconds = 5 * 60; // 5 minutes for free trial
+      } else if (subscription.plan_type === 'Basic') {
+        dailyLimitSeconds = 5 * 60; // 5 minutes for Basic
+      } else if (subscription.plan_type === 'Pro') {
+        dailyLimitSeconds = 60 * 60; // 1 hour for Pro
+      } else {
+        dailyLimitSeconds = 5 * 60; // Default to 5 minutes
+      }
+    }
+    
+    // Check if user has exceeded daily limit
+    if (totalUsedTime >= dailyLimitSeconds) {
       return res
         .status(400)
-        .json({ success: false, error: "Daily speaking limit reached" });
+        .json({ 
+          success: false, 
+          error: `Daily speaking limit reached. ${subscription?.plan_type || 'Basic'} plan allows ${Math.floor(dailyLimitSeconds/60)} minutes per day.` 
+        });
     }
 
     // Create a new speaking session (start_time only)
@@ -506,12 +547,14 @@ router.post("/courses/speaking/start", authenticateToken, async (req, res) => {
       [userId, course.id, sessionDate, startTime]
     );
 
+    const remainingTime = dailyLimitSeconds - totalUsedTime;
+    
     res.json({
       success: true,
       message: "Speaking session started",
       data: {
         startTime: new Date(),
-        timeLimit: 5 * 60 - totalSeconds, // seconds left for today
+        timeLimit: remainingTime, // seconds left for today
       },
     });
   } catch (error) {
