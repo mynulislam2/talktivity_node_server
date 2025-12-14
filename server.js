@@ -360,6 +360,7 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/vocabulary', vocabularyRoutes);
 app.use('/api', securePaymentRoutes);
+app.use('/api/payments', require('./routes/aamarpay-routes'));
 app.use('/api', subscriptionRoutes);
 app.use('/api/usage', usageTrackingRoutes);
 app.use('/api', manualActivationRoutes);
