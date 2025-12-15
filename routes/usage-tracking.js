@@ -82,6 +82,27 @@ const canUseFreeTrial = async (userId) => {
   }
 };
 
+// Helper function to get lifetime onboarding usage (total seconds)
+const getLifetimeOnboardingUsage = async (client, userId) => {
+  const lifetimeQuery = `
+    SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
+    FROM device_speaking_sessions 
+    WHERE user_id = $1
+  `;
+  const lifetimeResult = await client.query(lifetimeQuery, [userId]);
+  return lifetimeResult.rows[0]?.total_seconds || 0;
+};
+
+// Helper to mark onboarding call used when lifetime exhausted
+const markOnboardingUsed = async (client, userId) => {
+  await client.query(
+    `UPDATE users 
+     SET onboarding_test_call_used = TRUE 
+     WHERE id = $1`,
+    [userId]
+  );
+};
+
 // Helper function to start free trial
 const startFreeTrial = async (userId) => {
   const client = await db.pool.connect();
@@ -123,7 +144,7 @@ router.post('/start-session', authenticateToken, async (req, res) => {
     
     const subscription = await getUserSubscription(userId);
     if (!subscription) {
-      // Check if user can use onboarding test call
+      // Check if user can use onboarding test call (lifetime 5 minutes across sessions)
       const client = await db.pool.connect();
       try {
         const result = await client.query(`
@@ -134,21 +155,41 @@ router.post('/start-session', authenticateToken, async (req, res) => {
         const user = result.rows[0];
         const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
         
-        if (hasUsedOnboardingCall) {
+        // Compute lifetime usage
+        const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
+        const onboardingLimitSeconds = 5 * 60;
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
+
+        // Source of truth is lifetime seconds; only block when none remain
+        if (remainingLifetimeSeconds <= 0) {
           return res.status(403).json({ 
             success: false, 
-            error: 'Onboarding test call already used. Please subscribe for more calls.' 
+            error: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.',
+            lifetimeLimitReached: true,
+            lifetimeUsedSeconds: lifetimeSeconds,
+            remainingLifetimeSeconds: 0
           });
         }
         
+        // If flag is out of sync but time remains, clear it
+        if (hasUsedOnboardingCall && remainingLifetimeSeconds > 0) {
+          await client.query(
+            `UPDATE users SET onboarding_test_call_used = FALSE WHERE id = $1`,
+            [userId]
+          );
+        }
+        
         // Don't mark as used yet - only mark when session actually ends
-        // Return session ID for onboarding call
+        // Return session ID for onboarding call and remaining lifetime info
         const sessionId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         return res.json({ 
           success: true, 
           sessionId,
           message: 'Onboarding test call started',
-          isOnboardingCall: true
+          isOnboardingCall: true,
+          lifetimeLimitSeconds: onboardingLimitSeconds,
+          lifetimeUsedSeconds: lifetimeSeconds,
+          remainingLifetimeSeconds
         });
         
       } finally {
@@ -222,50 +263,34 @@ router.post('/end-session', authenticateToken, async (req, res) => {
       // For onboarding calls, track lifetime usage
       const client = await db.pool.connect();
       try {
-        // Check if user has already used their 5-minute lifetime limit
-        const lifetimeQuery = `
-          SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
-          FROM device_speaking_sessions 
-          WHERE user_id = $1
-        `;
-        const lifetimeResult = await client.query(lifetimeQuery, [userId]);
-        const lifetimeSeconds = lifetimeResult.rows[0]?.total_seconds || 0;
-        
-        if (lifetimeSeconds >= 5 * 60) {
-          // Mark onboarding call as used when lifetime limit is reached
-          await client.query(`
-            UPDATE users 
-            SET onboarding_test_call_used = TRUE 
-            WHERE id = $1
-          `, [userId]);
-          
-          return res.json({ 
-            success: true, 
-            message: 'Onboarding test call lifetime limit reached',
-            isOnboardingCall: true,
-            lifetimeLimitReached: true
-          });
+        // Record session duration in device_speaking_sessions
+        await client.query(
+          `INSERT INTO device_speaking_sessions (user_id, duration_seconds, created_at)
+           VALUES ($1, $2, CURRENT_TIMESTAMP)`,
+          [userId, durationSeconds]
+        );
+
+        const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
+        const onboardingLimitSeconds = 5 * 60;
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
+
+        if (remainingLifetimeSeconds <= 0) {
+          await markOnboardingUsed(client, userId);
+        } else if (lifetimeSeconds >= onboardingLimitSeconds) {
+          await markOnboardingUsed(client, userId);
         }
-        
-        // If this session would exceed the lifetime limit, mark as used
-        if (lifetimeSeconds + durationSeconds >= 5 * 60) {
-          await client.query(`
-            UPDATE users 
-            SET onboarding_test_call_used = TRUE 
-            WHERE id = $1
-          `, [userId]);
-        }
+
+        return res.json({ 
+          success: true, 
+          message: 'Onboarding test call ended',
+          isOnboardingCall: true,
+          lifetimeLimitReached: remainingLifetimeSeconds <= 0,
+          lifetimeUsedSeconds: lifetimeSeconds,
+          remainingLifetimeSeconds
+        });
       } finally {
         client.release();
       }
-      
-      // For onboarding calls, just log the usage but don't count against daily limits
-      console.log(`Onboarding call ended: ${durationSeconds}s for user ${userId}`);
-      return res.json({ 
-        success: true, 
-        message: 'Onboarding test call ended',
-        isOnboardingCall: true
-      });
     }
     
     // For regular sessions, update daily usage
@@ -588,7 +613,7 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
     const subscription = await getUserSubscription(userId);
     
     if (!subscription) {
-      // Check if user has used their onboarding test call
+      // Onboarding lifetime logic for users without subscription
       const client = await db.pool.connect();
       try {
         const result = await client.query(`
@@ -598,58 +623,47 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
         
         const user = result.rows[0];
         const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
+
+        const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
+        const onboardingLimitSeconds = 5 * 60;
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
         
-        if (!hasUsedOnboardingCall) {
-          // Check lifetime usage for onboarding call
-          const lifetimeQuery = `
-            SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
-            FROM device_speaking_sessions 
-            WHERE user_id = $1
-          `;
-          const lifetimeResult = await client.query(lifetimeQuery, [userId]);
-          const lifetimeSeconds = lifetimeResult.rows[0]?.total_seconds || 0;
-          const remainingLifetimeSeconds = Math.max(0, (5 * 60) - lifetimeSeconds);
-          
-          if (remainingLifetimeSeconds <= 0) {
-            // Mark onboarding call as used when lifetime limit is reached
-            await client.query(`
-              UPDATE users 
-              SET onboarding_test_call_used = TRUE 
-              WHERE id = $1
-            `, [userId]);
-            
-            return res.json({ 
-              success: true, 
-              hasSubscription: false,
-              remainingTimeSeconds: 0,
-              dailyLimitSeconds: 0,
-              canStartCall: false,
-              message: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.'
-            });
+        if (remainingLifetimeSeconds <= 0) {
+          if (!hasUsedOnboardingCall) {
+            await markOnboardingUsed(client, userId);
           }
-          
-          // Allow onboarding call with remaining lifetime time
-          return res.json({ 
-            success: true, 
-            hasSubscription: false,
-            remainingTimeSeconds: remainingLifetimeSeconds,
-            dailyLimitSeconds: 5 * 60,
-            canStartCall: true,
-            isOnboardingCall: true,
-            lifetimeUsedSeconds: lifetimeSeconds,
-            message: 'Onboarding test call available'
-          });
-        } else {
-          // No more calls without subscription
           return res.json({ 
             success: true, 
             hasSubscription: false,
             remainingTimeSeconds: 0,
             dailyLimitSeconds: 0,
             canStartCall: false,
-            message: 'Onboarding test call already used. Please subscribe for more calls.'
+            lifetimeUsedSeconds: lifetimeSeconds,
+            remainingLifetimeSeconds: 0,
+            message: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.'
           });
         }
+        
+        // If flag is out of sync but time remains, clear it
+        if (hasUsedOnboardingCall && remainingLifetimeSeconds > 0) {
+          await client.query(
+            `UPDATE users SET onboarding_test_call_used = FALSE WHERE id = $1`,
+            [userId]
+          );
+        }
+        
+        // Allow onboarding call with remaining lifetime time
+        return res.json({ 
+          success: true, 
+          hasSubscription: false,
+          remainingTimeSeconds: remainingLifetimeSeconds,
+          dailyLimitSeconds: onboardingLimitSeconds,
+          canStartCall: true,
+          isOnboardingCall: true,
+          lifetimeUsedSeconds: lifetimeSeconds,
+          remainingLifetimeSeconds,
+          message: 'Onboarding test call available'
+        });
       } finally {
         client.release();
       }
