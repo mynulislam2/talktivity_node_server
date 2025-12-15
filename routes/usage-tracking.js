@@ -125,6 +125,16 @@ const startFreeTrial = async (userId) => {
       INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, is_free_trial, free_trial_started_at, free_trial_used)
       VALUES ($1, $2, 'active', $3, $4, true, $3, true)
     `, [userId, planId, startDate, endDate]);
+
+    // Mark onboarding test call as used once free trial starts
+    await client.query(
+      `
+        UPDATE users
+        SET onboarding_test_call_used = TRUE
+        WHERE id = $1
+      `,
+      [userId]
+    );
     
     return true;
   } finally {

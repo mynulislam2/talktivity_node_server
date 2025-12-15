@@ -223,6 +223,16 @@ router.post('/aamarpay/process-success', express.json(), async (req, res) => {
         SET subscription_id = $1
         WHERE id = $2
       `, [payment.subscription_id, payment.id]);
+
+      // Mark onboarding test call as used for this user after successful purchase
+      await client.query(
+        `
+          UPDATE users
+          SET onboarding_test_call_used = TRUE
+          WHERE id = $1
+        `,
+        [payment.user_id]
+      );
     } else if (!isSuccessful && payment.subscription_id) {
       // Mark subscription as failed
       await client.query(`
