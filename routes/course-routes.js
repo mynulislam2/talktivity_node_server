@@ -618,9 +618,16 @@ router.post("/courses/speaking/end", authenticateToken, async (req, res) => {
     }
     
     if (sessionResult.rows.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "No active speaking session found" });
+      // No active speaking session row - treat as gracefully ended instead of erroring
+      return res.json({
+        success: true,
+        message: "No active speaking session found to end",
+        data: {
+          duration: 0,
+          totalSpoken: 0,
+          completed: false,
+        },
+      });
     }
     const session = sessionResult.rows[0];
     const endTime = new Date();

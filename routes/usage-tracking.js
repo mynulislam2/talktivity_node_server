@@ -274,10 +274,12 @@ router.post('/end-session', authenticateToken, async (req, res) => {
       const client = await db.pool.connect();
       try {
         // Record session duration in device_speaking_sessions
+        const now = new Date();
+        const sessionDate = now.toISOString().split('T')[0];
         await client.query(
-          `INSERT INTO device_speaking_sessions (user_id, duration_seconds, created_at)
-           VALUES ($1, $2, CURRENT_TIMESTAMP)`,
-          [userId, durationSeconds]
+          `INSERT INTO device_speaking_sessions (user_id, date, start_time, end_time, duration_seconds)
+           VALUES ($1, $2, $3, $3, $4)`,
+          [userId, sessionDate, now, durationSeconds]
         );
 
         const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
