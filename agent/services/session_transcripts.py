@@ -1,0 +1,79 @@
+import json
+from datetime import datetime
+
+from config import logger
+from db import (
+    save_test_call_usage,
+    save_transcript_by_device_id,
+    save_transcript_to_postgres,
+)
+
+
+async def save_session_transcript(
+    *,
+    session,
+    ctx,
+    participant,
+    session_type: str,
+    session_start_time: datetime,
+) -> None:
+    """
+    Persist a finished session transcript to filesystem and PostgreSQL.
+
+    This is extracted from the original minimal_assistant.write_transcript closure
+    so it can be reused from other entrypoints or APIs.
+    """
+    transcript_data = session.history.to_dict()
+
+    # Track test call usage lifetime per user (5 minutes total across sessions)
+    if session_type == "test" and participant.identity.startswith("user_"):
+        try:
+            user_id = int(participant.identity.replace("user_", ""))
+            duration_seconds = int(
+                (datetime.now() - session_start_time).total_seconds()
+            )
+            await save_test_call_usage(user_id, duration_seconds)
+        except Exception as e:
+            logger.error("Error saving test call usage: %s", e)
+
+    # Save to PostgreSQL based on participant identity type
+    try:
+        room_name = getattr(ctx.room, "name", "console") if hasattr(ctx, "room") else "console"
+        
+        if participant.identity.startswith("user_"):
+            # Save to conversations table for user_X format
+            success = await save_transcript_to_postgres(
+                room_name=room_name,
+                participant_identity=participant.identity,
+                transcript_data=transcript_data,
+            )
+            if not success:
+                logger.warning(
+                    "Failed to save transcript for user %s in room %s",
+                    participant.identity,
+                    room_name,
+                )
+        else:
+            # Save to device_conversations table for other formats (like finger_xxx)
+            try:
+                success = await save_transcript_by_device_id(
+                    room_name=room_name,
+                    device_id=participant.identity,
+                    transcript_data=transcript_data,
+                )
+                if not success:
+                    logger.warning(
+                        "Failed to save transcript for device_id %s in room %s",
+                        participant.identity,
+                        room_name,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Unexpected error while saving transcript for device_id %s: %s",
+                    participant.identity,
+                    e,
+                )
+    except Exception as e:
+        logger.warning("Could not save transcript (console mode): %s", e)
+
+

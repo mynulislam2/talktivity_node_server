@@ -6,10 +6,18 @@
     "scripts": {
         "start": "node server.js",
         "dev": "nodemon server.js",
-        "migrate": "node migrate-existing-users.js"
+        "migrate": "node migrate-existing-users.js",
+        "build:agent": "tsc -p tsconfig.json",
+        "start:agent": "node dist/agent/index.js dev",
+        "dev:agent": "npm run build:agent && npm run start:agent",
+        "download:agent-files": "npm run build:agent && node dist/agent/index.js download-files"
     },
     "dependencies": {
         "@getbrevo/brevo": "^3.0.1",
+        "@livekit/agents": "latest",
+        "@livekit/agents-plugin-google": "latest",
+        "@livekit/agents-plugin-livekit": "latest",
+        "@livekit/agents-plugin-silero": "latest",
         "@types/react-datepicker": "^6.2.0",
         "aamarpay.v2": "^1.1.1",
         "axios": "^1.10.0",
@@ -23,6 +31,7 @@
         "google-auth-library": "^10.1.0",
         "helmet": "^8.1.0",
         "jsonwebtoken": "^9.0.2",
+        "jws": "^4.0.1",
         "multer": "^2.0.2",
         "pdf-parse": "^1.1.1",
         "pg": "^8.15.6",
@@ -35,6 +44,10 @@
         "swiper": "^11.2.10"
     },
     "devDependencies": {
-        "nodemon": "^3.0.1"
+        "@types/node": "^20.0.0",
+        "nodemon": "^3.0.1",
+        "patch-package": "^8.0.1",
+        "ts-node": "^10.9.0",
+        "typescript": "^5.0.0"
     }
 }

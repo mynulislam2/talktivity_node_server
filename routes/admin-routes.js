@@ -45,8 +45,11 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
           user_id,
           COUNT(*) as speaking_sessions_count,
           COALESCE(SUM(duration_seconds), 0) as speaking_duration
-        FROM speaking_sessions
-        WHERE duration_seconds > 0
+        FROM (
+          SELECT user_id, duration_seconds FROM speaking_sessions WHERE duration_seconds > 0
+          UNION ALL
+          SELECT user_id, duration_seconds FROM device_speaking_sessions WHERE duration_seconds > 0
+        ) all_sessions
         GROUP BY user_id
       ) speaking_stats ON u.id = speaking_stats.user_id
       LEFT JOIN (
@@ -224,14 +227,22 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
     `);
     const totalCourses = parseInt(courseResult.rows[0].count);
     
-    // Get total speaking session duration from all users
-    const totalConversationDurationResult = await client.query(`
+    // Get total speaking session duration from all users (course-based + practice/call)
+    const courseBasedDurationResult = await client.query(`
       SELECT 
         COALESCE(SUM(duration_seconds), 0) as total_duration_seconds
       FROM speaking_sessions
       WHERE duration_seconds > 0
     `);
-    const totalConversationDurationSeconds = parseInt(totalConversationDurationResult.rows[0].total_duration_seconds);
+    const practiceCallDurationResult = await client.query(`
+      SELECT 
+        COALESCE(SUM(duration_seconds), 0) as total_duration_seconds
+      FROM device_speaking_sessions
+      WHERE duration_seconds > 0
+    `);
+    const totalConversationDurationSeconds = 
+      parseInt(courseBasedDurationResult.rows[0].total_duration_seconds || 0) +
+      parseInt(practiceCallDurationResult.rows[0].total_duration_seconds || 0);
     
     res.json({
       totalRegistered,

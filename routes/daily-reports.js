@@ -120,7 +120,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
 
 
 // Helper function to generate report using Groq API
-const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
+const generateReportWithGroq = async (transcriptData) => {
     try {
         const url = "https://api.groq.com/openai/v1/chat/completions";
         
@@ -273,8 +273,13 @@ const generateReportWithGroq = async (transcriptData, retryCount = 0) => {
             }
         };
 
+        // Use environment variable for model, with fallback to reliable Groq models
+        // Default to a current Groq-supported model
+        const GROQ_MODEL_REPORT = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "llama-3.1-70b-versatile";
+        const GROQ_MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || "mixtral-8x7b-32768";
+
         const payload = {
-            model: "openai/gpt-oss-120b",
+            model: GROQ_MODEL_REPORT,
             messages: [
                 {
                     role: "system",
@@ -396,7 +401,7 @@ QUALITY ASSURANCE:
                 }
             ],
             temperature: 1,
-            max_tokens: 4096,
+            max_tokens: 8192,
         };
 
         const headers = {
@@ -409,9 +414,76 @@ QUALITY ASSURANCE:
             timeout: 45000 // Increased timeout for more comprehensive analysis
         });
 
-        const contentString = aiResponse?.data?.choices?.[0]?.message?.content;
+        // Log the full response for debugging if content is missing
+        if (!aiResponse?.data?.choices?.[0]?.message?.content) {
+            console.error('❌ Groq API Response Debug:', JSON.stringify({
+                status: aiResponse.status,
+                statusText: aiResponse.statusText,
+                dataKeys: Object.keys(aiResponse.data || {}),
+                choicesLength: aiResponse?.data?.choices?.length,
+                firstChoice: aiResponse?.data?.choices?.[0],
+                error: aiResponse?.data?.error,
+                fullResponse: JSON.stringify(aiResponse.data, null, 2).substring(0, 1000) // First 1000 chars
+            }, null, 2));
+        }
+
+        const choice = aiResponse?.data?.choices?.[0];
+        let contentString = choice?.message?.content;
+
+        // If content is empty but Groq returned reasoning, fallback to reasoning text
+        if ((!contentString || contentString.length === 0) && typeof choice?.message?.reasoning === "string") {
+            contentString = choice.message.reasoning;
+        }
+
+        // Some Groq/OpenAI-compatible responses may return content as an array of parts
+        if (Array.isArray(contentString)) {
+            contentString = contentString
+                .map((part) => {
+                    if (!part) return "";
+                    // Groq often uses { type: 'text', text: '...' }
+                    if (typeof part === "string") return part;
+                    if (typeof part.text === "string") return part.text;
+                    if (typeof part.content === "string") return part.content;
+                    return "";
+                })
+                .join("\n")
+                .trim();
+        }
+
+        // Fallback: sometimes the SDK may put the text directly on message
+        if (!contentString && typeof choice?.message === "string") {
+            contentString = choice.message;
+        }
+
+        // Check for finish_reason that might indicate why content is missing
         if (!contentString) {
-            throw new Error("No content received from AI");
+            const finishReason = choice?.finish_reason;
+            const apiErrorMessage =
+                aiResponse?.data?.error?.message ||
+                aiResponse?.data?.error ||
+                null;
+            
+            let errorMsg = "No content received from AI";
+            if (finishReason === "length") {
+                errorMsg = "AI response was truncated (max_tokens reached). Consider increasing max_tokens.";
+            } else if (finishReason === "content_filter") {
+                errorMsg = "AI response was filtered by content policy.";
+            } else if (finishReason === "stop") {
+                errorMsg = "AI stopped generating (stop token reached).";
+            } else if (apiErrorMessage) {
+                errorMsg = `Groq API returned error: ${apiErrorMessage}`;
+            } else if (finishReason) {
+                errorMsg = `No content received from AI. Finish reason: ${finishReason}`;
+            }
+            
+            console.error(`❌ Groq API Error Details:`, {
+                finishReason,
+                apiErrorMessage,
+                choice: choice ? Object.keys(choice) : 'no choice',
+                message: choice?.message ? Object.keys(choice.message) : 'no message'
+            });
+            
+            throw new Error(errorMsg);
         }
 
         // Parse the AI response to extract JSON
@@ -473,7 +545,7 @@ QUALITY ASSURANCE:
 
     } catch (error) {
         console.error("Groq API Error:", error);
-        return { success: false, error: 'AI analysis failed' };
+        return { success: false, error: error.message || 'AI analysis failed' };
     }
 };
 

@@ -5,16 +5,22 @@ const { authenticateToken } = require('./auth-routes');
 const db = require('../db');
 
 // Configuration from environment variables or use defaults
-const AAMARPAY_STORE_ID = process.env.AAMARPAY_STORE_ID || "aamarpaytest";
-const AAMARPAY_SIGNATURE_KEY = process.env.AAMARPAY_SIGNATURE_KEY || "dbb74894e82415a2f7ff0ec3a97e4183";
-const IS_SANDBOX = process.env.AAMARPAY_SANDBOX !== "false"; // Default to sandbox (true) unless explicitly set to false
+const AAMARPAY_STORE_ID = process.env.AAMARPAY_STORE_ID;
+const AAMARPAY_SIGNATURE_KEY = process.env.AAMARPAY_SIGNATURE_KEY ;
+const IS_SANDBOX = process.env.AAMARPAY_SANDBOX; // Default to sandbox (true) unless explicitly set to false
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-// Make a pay instance from the Payment class
+// Make a pay instance from the Payment class (hardcoded for debugging/fix)
+const STORE_ID = AAMARPAY_STORE_ID
+const SIGNATURE_KEY = AAMARPAY_SIGNATURE_KEY
+const isSandbox = false; // try live mode to match merchant credentials
+
+console.log('AamarPay hardcoded config: store_id=talktivity, sandbox=false (live)');
+
 const Pay = new Payment(
-  AAMARPAY_STORE_ID, // store id
-  AAMARPAY_SIGNATURE_KEY, // signature key
-  !IS_SANDBOX // for sandbox test if you want to live make it true
+  STORE_ID,
+  SIGNATURE_KEY,
+  isSandbox
 );
 
 // Helper function to get plan details
@@ -104,6 +110,7 @@ router.post('/aamarpay/payment', authenticateToken, async (req, res) => {
       order_id: tran_id
     });
   } catch (e) {
+    console.log('Error in payment route:', e);
     if (client) {
       try {
         await client.query('ROLLBACK');

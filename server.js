@@ -151,6 +151,7 @@ const subscriptionRoutes = require('./routes/subscription-routes');
 const usageTrackingRoutes = require('./routes/usage-tracking');
 const manualActivationRoutes = require('./routes/manual-activation');
 const reportRoutes = require('./routes/report-routes');
+const userProgressRoutes = require('./routes/user-progress');
 // Create Express app
 const app = express();
 const port = process.env.API_PORT || 8082;
@@ -355,6 +356,75 @@ app.use('/api/daily-reports', dailyReportsRoutes);
 app.use('/api/admin', adminLimiter, adminRoutes);
 app.use('/api/groups', groupLimiter, groupChatRoutes);
 app.use('/api/group-chat', groupLimiter, groupChatRoutes); // Add this line to support both /groups and /group-chat endpoints
+
+// API endpoint for Python agent to emit Socket.io call_cut events
+// IMPORTANT: This route MUST be defined before any catch-all routes (like app.use('/'))
+app.post('/api/agent/call-cut', express.json(), (req, res) => {
+  try {
+    const { user_id, reason, message } = req.body;
+    
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id is required' });
+    }
+    
+    const payload = {
+      type: 'call_cut',
+      callCut: true,
+      reason: reason || 'time_limit',
+      message: message || 'Time limit reached. Call ending...',
+      remaining: 0,
+    };
+    
+    // Find and emit to the specific user's socket(s)
+    // Convert user_id to number for comparison (socket.userId is stored as number)
+    const userIdNum = typeof user_id === 'string' ? parseInt(user_id, 10) : user_id;
+    let emitted = false;
+    let socketCount = 0;
+    
+    console.log(`[Socket.IO] Looking for socket with userId=${userIdNum} (type: ${typeof userIdNum})`);
+    
+    // Try multiple approaches to find and emit to the user's socket
+    // Approach 1: Direct socket matching by userId
+    io.sockets.sockets.forEach((socket) => {
+      socketCount++;
+      const socketUserId = socket.userId;
+      
+      // Compare as numbers to avoid type mismatch
+      if (socketUserId != null && Number(socketUserId) === Number(userIdNum)) {
+        socket.emit('call_cut', payload);
+        emitted = true;
+        console.log(`[Socket.IO] ✅ Emitted call_cut event to user ${userIdNum} (socket ${socket.id})`);
+      }
+    });
+    
+    // Approach 2: Try emitting to a user-specific room (if socket joined one)
+    const userRoom = `user:${userIdNum}`;
+    const roomSockets = io.sockets.adapter.rooms.get(userRoom);
+    if (roomSockets && roomSockets.size > 0) {
+      io.to(userRoom).emit('call_cut', payload);
+      emitted = true;
+      console.log(`[Socket.IO] ✅ Emitted call_cut event to room ${userRoom} (${roomSockets.size} socket(s))`);
+    }
+    
+    // Approach 3: Broadcast to all and let frontend filter (fallback)
+    if (!emitted) {
+      console.warn(`[Socket.IO] ⚠️ No direct socket found for user ${userIdNum}, broadcasting to all`);
+      console.warn(`[Socket.IO] Available socket userIds:`, Array.from(io.sockets.sockets.values()).map(s => ({ id: s.id, userId: s.userId })).filter(s => s.userId));
+      
+      // Broadcast with user_id in payload so frontend can filter
+      io.emit('call_cut', { ...payload, targetUserId: userIdNum });
+      emitted = true; // Mark as emitted even though it's a broadcast
+      console.log(`[Socket.IO] 📢 Broadcasted call_cut event with targetUserId=${userIdNum}`);
+    }
+    
+    console.log(`[Socket.IO] Total sockets checked: ${socketCount}, Emitted: ${emitted}`);
+    
+    res.json({ success: true, message: 'Call cut event emitted', emitted });
+  } catch (error) {
+    console.error('[Socket.IO] Error emitting call_cut event:', error);
+    res.status(500).json({ success: false, error: 'Failed to emit call cut event' });
+  }
+});
 app.use('/api/dms', dmRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/ai', aiRoutes);
@@ -365,6 +435,10 @@ app.use('/api', subscriptionRoutes);
 app.use('/api/usage', usageTrackingRoutes);
 app.use('/api', manualActivationRoutes);
 app.use('/api/report', reportRoutes);
+app.use('/api/user', userProgressRoutes);
+// Mount /generate-report at root to match Python API structure (port 8090)
+// This allows frontend to call /generate-report directly
+app.use('/', reportRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -606,12 +680,31 @@ Available routes:
       
     });
   } catch (err) {
-    // Remove any debug logging or temporary debug code
+    console.error('❌ Server startup failed:', err);
+    console.error('Error stack:', err.stack);
     process.exit(1);
   }
 };
 
-// Start the server
-startServer();
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('Stack:', reason?.stack);
+});
 
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  console.error('Stack:', error.stack);
+  process.exit(1);
+});
+
+// Start the server
+startServer().catch((err) => {
+  console.error('❌ Failed to start server:', err);
+  console.error('Stack:', err.stack);
+  process.exit(1);
+});
+
+// Export io instance for use in services
 module.exports = { app, server, io, validateEnvironmentVariables };

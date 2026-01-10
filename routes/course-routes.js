@@ -4,6 +4,7 @@ const db = require("../db");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
 const listeningTopics = require("../listening-topics");
+const { calculateXP, calculateLevel } = require("../utils/xpCalc");
 
 // Validate JWT_SECRET environment variable
 if (!process.env.JWT_SECRET) {
@@ -358,14 +359,58 @@ router.get("/courses/status", authenticateToken, async (req, res) => {
       course
     );
 
-    // Sum all speaking session durations for today
-    const sumResult = await client.query(
-      "SELECT COALESCE(SUM(duration_seconds),0) as total_seconds FROM speaking_sessions WHERE user_id = $1 AND date = $2",
+    // Use same logic as usage-tracking API for consistency
+    // Get subscription to determine daily limit
+    const subscriptionResult = await client.query(
+      `SELECT s.*, sp.plan_type, sp.features
+       FROM subscriptions s
+       JOIN subscription_plans sp ON s.plan_id = sp.id
+       WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    
+    let timeRemaining = 0;
+    let dailyLimitSeconds = 5 * 60; // Default 5 minutes
+    
+    if (subscriptionResult.rows.length > 0) {
+      const subscription = subscriptionResult.rows[0];
+      const isFreeTrial = subscription.is_free_trial && 
+                          subscription.free_trial_started_at && 
+                          new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
+      
+      // Calculate daily limits based on plan (same as usage-tracking)
+      if (subscription.plan_type === 'FreeTrial' || isFreeTrial) {
+        dailyLimitSeconds = 5 * 60; // 5 minutes
+      } else if (subscription.plan_type === 'Basic') {
+        dailyLimitSeconds = 5 * 60; // 5 minutes
+      } else if (subscription.plan_type === 'Pro') {
+        dailyLimitSeconds = 60 * 60; // 1 hour
+      }
+    }
+    
+    // Get today's usage from daily_usage table (same as usage-tracking)
+    const usageResult = await client.query(
+      `SELECT practice_time_seconds, roleplay_time_seconds, call_time_seconds
+       FROM daily_usage 
+       WHERE user_id = $1 AND usage_date = $2`,
       [userId, today]
     );
-    const totalSeconds = parseInt(sumResult.rows[0].total_seconds, 10);
-    const maxSeconds = 5 * 60;
-    const timeRemaining = Math.max(0, maxSeconds - totalSeconds);
+    
+    const todayUsage = usageResult.rows[0] || null;
+    const practiceTimeSeconds = todayUsage ? (todayUsage.practice_time_seconds || 0) : 0;
+    const roleplayTimeSeconds = todayUsage ? (todayUsage.roleplay_time_seconds || 0) : 0;
+    const callTimeSeconds = todayUsage ? (todayUsage.call_time_seconds || 0) : 0;
+    const usedTimeSeconds = practiceTimeSeconds + roleplayTimeSeconds + callTimeSeconds;
+    
+    // Calculate remaining time (same logic as usage-tracking API)
+    // For practice sessions, use practice limit (5 min max for all plans)
+    const practiceLimitSeconds = 5 * 60;
+    const practiceRemainingSeconds = Math.max(0, practiceLimitSeconds - practiceTimeSeconds);
+    
+    // Use practice remaining for timeRemaining (since this is for speaking/practice)
+    timeRemaining = practiceRemainingSeconds;
     // Determine what's available today
     const dayType = getDayType(currentDay);
 
@@ -704,7 +749,9 @@ router.post("/courses/speaking/end", authenticateToken, async (req, res) => {
   }
 });
 
-// Check speaking time limit and auto-complete if needed
+// DEPRECATED: Time limit checking is now handled by Python agent
+// This endpoint is kept for backward compatibility but should not be used
+// Python agent actively checks time every 10 seconds and disconnects when limit is reached
 router.post(
   "/courses/speaking/check-time",
   authenticateToken,
@@ -960,7 +1007,9 @@ router.post(
   }
 );
 
-// Check user speaking time limit
+// DEPRECATED: Time limit checking is now handled by Python agent
+// This endpoint is kept for backward compatibility but should not be used
+// Python agent actively checks time every 10 seconds and disconnects when limit is reached
 router.post(
   "/courses/user-speaking/check-time",
   authenticateToken,
@@ -1679,10 +1728,10 @@ router.get("/reports/monthly", authenticateToken, async (req, res) => {
     );
     const conversations = conversationsResult.rows;
 
-    // Fetch all speaking sessions for the month
-    const sessionsResult = await client.query(
+    // Fetch all speaking sessions for the month - combine course-based and practice/call sessions
+    const courseBasedSessions = await client.query(
       `
-      SELECT * FROM speaking_sessions
+      SELECT *, 'course' as session_type FROM speaking_sessions
       WHERE user_id = $1
         AND EXTRACT(MONTH FROM date) = $2
         AND EXTRACT(YEAR FROM date) = $3
@@ -1690,7 +1739,32 @@ router.get("/reports/monthly", authenticateToken, async (req, res) => {
     `,
       [userId, monthInt, yearInt]
     );
-    const sessions = sessionsResult.rows;
+    
+    const practiceCallSessions = await client.query(
+      `
+      SELECT 
+        date,
+        duration_seconds,
+        start_time,
+        end_time,
+        'practice' as session_type,
+        NULL as course_id,
+        NULL as id,
+        NULL as created_at,
+        NULL as updated_at
+      FROM device_speaking_sessions
+      WHERE user_id = $1
+        AND duration_seconds > 0
+        AND EXTRACT(MONTH FROM date) = $2
+        AND EXTRACT(YEAR FROM date) = $3
+      ORDER BY date DESC, start_time DESC
+    `,
+      [userId, monthInt, yearInt]
+    );
+    
+    // Combine both types of sessions
+    const sessions = [...courseBasedSessions.rows, ...practiceCallSessions.rows]
+      .sort((a, b) => new Date(b.date || b.start_time) - new Date(a.date || a.start_time));
 
     // Fetch all listening sessions for the month
     const listeningSessionsResult = await client.query(
@@ -2448,7 +2522,14 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
       SELECT 
         -- Overall progress
         COUNT(*) as total_days,
-        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
+        -- Combined speaking days: days where course speaking was completed OR practice/call session happened
+        (SELECT COUNT(DISTINCT date) FROM (
+          SELECT date FROM daily_progress WHERE user_id = $1 AND speaking_completed = true
+          UNION
+          SELECT usage_date as date FROM daily_usage WHERE user_id = $1 AND practice_time_seconds > 0
+          UNION
+          SELECT date FROM device_speaking_sessions WHERE user_id = $1 AND duration_seconds > 0
+        ) t) as speaking_days,
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
         COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
         COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
@@ -2473,14 +2554,14 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
         AVG(CASE WHEN quiz_completed = true THEN quiz_score END) as weekly_avg_quiz,
         AVG(CASE WHEN listening_quiz_completed = true THEN listening_quiz_score END) as weekly_avg_listening_quiz,
         
-        -- Time spent
-        SUM(speaking_duration_seconds) as total_speaking_time,
+        -- Time spent (from course-based sessions in daily_progress)
+        SUM(speaking_duration_seconds) as total_speaking_time_course,
         AVG(speaking_duration_seconds) as avg_speaking_time,
         SUM(listening_duration_seconds) as total_listening_time,
         AVG(listening_duration_seconds) as avg_listening_time,
         
-        -- Count of full 5-minute sessions (for bonus XP)
-        COUNT(CASE WHEN speaking_duration_seconds >= 299 THEN 1 END) as full_sessions
+        -- Count of full 5-minute sessions (for bonus XP) - course-based
+        COUNT(CASE WHEN speaking_duration_seconds >= 300 THEN 1 END) as full_sessions_course
         
       FROM daily_progress 
       WHERE user_id = $1 AND course_id = $2
@@ -2499,10 +2580,10 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
       [userId, course.id]
     );
 
-    // Get speaking session details
-    const speakingSessions = await client.query(
+    // Get speaking session details - combine both course-based and practice/call sessions
+    const courseBasedSessions = await client.query(
       `
-      SELECT date, duration_seconds, start_time, end_time
+      SELECT date, duration_seconds, start_time, end_time, 'course' as session_type
       FROM speaking_sessions
       WHERE user_id = $1 AND course_id = $2
       ORDER BY date DESC
@@ -2510,61 +2591,186 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
     `,
       [userId, course.id]
     );
+    
+    // Get practice/call sessions from device_speaking_sessions
+    const practiceCallSessions = await client.query(
+      `
+      SELECT date, duration_seconds, start_time, end_time, 'practice' as session_type
+      FROM device_speaking_sessions
+      WHERE user_id = $1 AND duration_seconds > 0
+      ORDER BY date DESC, start_time DESC
+      LIMIT 30
+    `,
+      [userId]
+    );
+    
+    // Combine and sort by date
+    const allSessions = [...courseBasedSessions.rows, ...practiceCallSessions.rows]
+      .sort((a, b) => new Date(b.date || b.start_time) - new Date(a.date || a.start_time))
+      .slice(0, 30);
+    
+    // Get total speaking time from daily_usage (includes practice + roleplay, more accurate)
+    const dailyUsageResult = await client.query(
+      `
+      SELECT 
+        COALESCE(SUM(practice_time_seconds), 0) + COALESCE(SUM(roleplay_time_seconds), 0) as total_practice_roleplay_time
+      FROM daily_usage
+      WHERE user_id = $1
+    `,
+      [userId]
+    );
+    const totalPracticeRoleplayTime = parseInt(dailyUsageResult.rows[0]?.total_practice_roleplay_time || 0, 10);
+    
+    // Get full sessions count from device_speaking_sessions (practice/call sessions >= 300 seconds)
+    const fullPracticeSessionsResult = await client.query(
+      `
+      SELECT COUNT(*) as full_sessions_practice
+      FROM device_speaking_sessions
+      WHERE user_id = $1 AND duration_seconds >= 300
+    `,
+      [userId]
+    );
+    const fullPracticeSessions = parseInt(fullPracticeSessionsResult.rows[0]?.full_sessions_practice || 0, 10);
 
-    // Calculate current streak
+    // Calculate current streak (combined speaking activity)
     const streakResult = await client.query(
       `
-      WITH completed_days AS (
-        SELECT date
-        FROM daily_progress
-        WHERE user_id = $1 AND course_id = $2
-          AND (
-            (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
-            OR (day_number = 6 AND quiz_completed)
-            OR (day_number = 7 AND speaking_completed)
-          )
+      WITH speaking_days AS (
+        -- Get all days with course-based speaking
+        SELECT DISTINCT date, user_id FROM daily_progress WHERE speaking_completed = true
+        UNION
+        -- Get all days with practice/call speaking
+        SELECT DISTINCT usage_date as date, user_id FROM daily_usage WHERE practice_time_seconds > 0
+        UNION
+        -- Get all days with practice/call speaking
+        SELECT DISTINCT date, user_id FROM device_speaking_sessions WHERE duration_seconds > 0
       ), consecutive AS (
         SELECT date,
                ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
-        FROM completed_days
+        FROM speaking_days
+        WHERE user_id = $1
       )
       SELECT COUNT(*) as current_streak
       FROM consecutive
-      WHERE grp = (SELECT grp FROM consecutive WHERE date = CURRENT_DATE)
+      WHERE grp = (
+        SELECT grp FROM consecutive 
+        WHERE date = (SELECT MAX(date) FROM speaking_days WHERE user_id = $1 AND date <= CURRENT_DATE)
+      )
     `,
-      [userId, course.id]
+      [userId]
     );
 
     // Get monthly trends (last 6 months)
     const monthlyTrends = await client.query(
       `
+      WITH monthly_speaking_days AS (
+        SELECT 
+          EXTRACT(YEAR FROM date) as year,
+          EXTRACT(MONTH FROM date) as month,
+          COUNT(DISTINCT date) as speaking_days
+        FROM (
+          SELECT date, user_id FROM daily_progress WHERE speaking_completed = true
+          UNION
+          SELECT usage_date as date, user_id FROM daily_usage WHERE practice_time_seconds > 0
+          UNION
+          SELECT date, user_id FROM device_speaking_sessions WHERE duration_seconds > 0
+        ) t
+        WHERE user_id = $1
+        GROUP BY year, month
+      )
       SELECT 
-        EXTRACT(YEAR FROM date) as year,
-        EXTRACT(MONTH FROM date) as month,
-        COUNT(CASE WHEN speaking_completed = true THEN 1 END) as speaking_days,
-        COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
-        COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
-        COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
-        COUNT(
-          CASE WHEN (
-            (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
-            OR (day_number = 6 AND quiz_completed)
-            OR (day_number = 7 AND speaking_completed)
-          ) THEN 1 END
-        ) as complete_days,
-        AVG(quiz_score) as avg_quiz_score,
-        AVG(listening_quiz_score) as avg_listening_quiz_score,
-        SUM(speaking_duration_seconds) as total_speaking_time,
-        SUM(listening_duration_seconds) as total_listening_time
-      FROM daily_progress
-      WHERE user_id = $1 AND course_id = $2 
-        AND date >= CURRENT_DATE - INTERVAL '6 months'
-      GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
-      ORDER BY year DESC, month DESC
+        dp.year,
+        dp.month,
+        COALESCE(msd.speaking_days, 0) as speaking_days,
+        dp.quiz_days,
+        dp.listening_days,
+        dp.listening_quiz_days,
+        dp.complete_days,
+        dp.avg_quiz_score,
+        dp.avg_listening_quiz_score,
+        dp.total_speaking_time_course,
+        dp.total_listening_time
+      FROM (
+        SELECT 
+          EXTRACT(YEAR FROM date) as year,
+          EXTRACT(MONTH FROM date) as month,
+          COUNT(CASE WHEN quiz_completed = true THEN 1 END) as quiz_days,
+          COUNT(CASE WHEN listening_completed = true THEN 1 END) as listening_days,
+          COUNT(CASE WHEN listening_quiz_completed = true THEN 1 END) as listening_quiz_days,
+          COUNT(
+            CASE WHEN (
+              (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
+              OR (day_number = 6 AND quiz_completed)
+              OR (day_number = 7 AND speaking_completed)
+            ) THEN 1 END
+          ) as complete_days,
+          AVG(quiz_score) as avg_quiz_score,
+          AVG(listening_quiz_score) as avg_listening_quiz_score,
+          SUM(speaking_duration_seconds) as total_speaking_time_course,
+          SUM(listening_duration_seconds) as total_listening_time
+        FROM daily_progress
+        WHERE user_id = $1 AND course_id = $2 
+          AND date >= CURRENT_DATE - INTERVAL '6 months'
+        GROUP BY year, month
+      ) dp
+      LEFT JOIN monthly_speaking_days msd ON dp.year = msd.year AND dp.month = msd.month
+      ORDER BY dp.year DESC, dp.month DESC
     `,
       [userId, course.id]
     );
+    
+    // Get practice/roleplay time by month from daily_usage
+    const practiceRoleplayByMonth = await client.query(
+      `
+      SELECT 
+        EXTRACT(YEAR FROM usage_date) as year,
+        EXTRACT(MONTH FROM usage_date) as month,
+        COALESCE(SUM(practice_time_seconds), 0) + COALESCE(SUM(roleplay_time_seconds), 0) as total_practice_roleplay_time
+      FROM daily_usage
+      WHERE user_id = $1 
+        AND usage_date >= CURRENT_DATE - INTERVAL '6 months'
+      GROUP BY EXTRACT(YEAR FROM usage_date), EXTRACT(MONTH FROM usage_date)
+      ORDER BY year DESC, month DESC
+    `,
+      [userId]
+    );
+    
+    // Merge course-based and practice/roleplay time by month
+    const monthlyTrendsMap = new Map();
+    monthlyTrends.rows.forEach(row => {
+      const key = `${row.year}-${row.month}`;
+      monthlyTrendsMap.set(key, {
+        ...row,
+        total_speaking_time: parseInt(row.total_speaking_time_course || 0)
+      });
+    });
+    practiceRoleplayByMonth.rows.forEach(row => {
+      const key = `${row.year}-${row.month}`;
+      const existing = monthlyTrendsMap.get(key);
+      if (existing) {
+        existing.total_speaking_time += parseInt(row.total_practice_roleplay_time || 0);
+      } else {
+        monthlyTrendsMap.set(key, {
+          year: row.year,
+          month: row.month,
+          speaking_days: 0,
+          quiz_days: 0,
+          listening_days: 0,
+          listening_quiz_days: 0,
+          complete_days: 0,
+          avg_quiz_score: 0,
+          avg_listening_quiz_score: 0,
+          total_speaking_time: parseInt(row.total_practice_roleplay_time || 0),
+          total_listening_time: 0
+        });
+      }
+    });
+    const mergedMonthlyTrends = Array.from(monthlyTrendsMap.values())
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
 
     // Get skill improvement trends
     const skillTrends = await client.query(
@@ -2583,23 +2789,26 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
 
     const analyticsData = analytics.rows[0];
     const currentStreak = streakResult.rows[0]?.current_streak || 0;
-    const totalSpeakingTime = parseInt(analyticsData.total_speaking_time) || 0;
-    const fullSessions = parseInt(analyticsData.full_sessions) || 0;
+    const totalSpeakingTimeCourse = parseInt(analyticsData.total_speaking_time_course) || 0;
+    const fullSessionsCourse = parseInt(analyticsData.full_sessions_course) || 0;
+    
+    // Combine course-based and practice/call speaking time
+    const totalSpeakingTime = totalSpeakingTimeCourse + totalPracticeRoleplayTime;
+    const fullSessions = fullSessionsCourse + fullPracticeSessions;
+    
     const totalQuizzes = parseInt(analyticsData.quiz_days) || 0;
     const examsPassed = weeklyExams.rows.filter(
       (exam) => exam.exam_score >= 60
     ).length;
 
-    // Calculate XP using new formula:
-    // 2 XP per minute of actual speaking time + 10 XP bonus for each full 5-minute session
-    // + 15 XP per quiz + 50 XP per exam passed + 5 XP per streak day
-    const totalMinutes = Math.floor(totalSpeakingTime / 60);
-    const totalXP =
-      totalMinutes * 2 +
-      fullSessions * 10 +
-      totalQuizzes * 15 +
-      examsPassed * 50 +
-      currentStreak * 5;
+    // Calculate XP using centralized utility
+    const totalXP = calculateXP({
+      speakingSeconds: totalSpeakingTime,
+      fullSessions: fullSessions,
+      quizzes: totalQuizzes,
+      exams: examsPassed,
+      streak: currentStreak
+    });
 
     res.json({
       success: true,
@@ -2622,7 +2831,7 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
           avg_listening_quiz_score:
             parseFloat(analyticsData.avg_listening_quiz_score) || 0,
           current_streak: currentStreak,
-          total_speaking_time: parseInt(analyticsData.total_speaking_time) || 0,
+          total_speaking_time: totalSpeakingTime, // Combined course + practice/roleplay
           avg_speaking_time: parseFloat(analyticsData.avg_speaking_time) || 0,
           total_listening_time:
             parseInt(analyticsData.total_listening_time) || 0,
@@ -2634,8 +2843,8 @@ router.get("/courses/analytics", authenticateToken, async (req, res) => {
           total_xp: totalXP, // Add XP to progress data
         },
         weeklyExams: weeklyExams.rows,
-        speakingSessions: speakingSessions.rows,
-        monthlyTrends: monthlyTrends.rows,
+        speakingSessions: allSessions,
+        monthlyTrends: mergedMonthlyTrends,
         skillTrends: skillTrends.rows,
       },
     });
@@ -2678,25 +2887,38 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
       SELECT 
         -- Streak achievements (same logic as analytics)
         (SELECT COUNT(*) FROM (
-          WITH completed_days AS (
-            SELECT date
-            FROM daily_progress
-            WHERE user_id = $1 AND course_id = $2
-              AND (
-                (day_number BETWEEN 1 AND 5 AND speaking_completed AND quiz_completed AND listening_completed AND listening_quiz_completed)
-                OR (day_number = 6 AND quiz_completed)
-                OR (day_number = 7 AND speaking_completed)
-              )
+          WITH speaking_days AS (
+            -- Get all days with course-based speaking
+            SELECT DISTINCT date, user_id FROM daily_progress WHERE speaking_completed = true
+            UNION
+            -- Get all days with practice/call speaking
+            SELECT DISTINCT usage_date as date, user_id FROM daily_usage WHERE practice_time_seconds > 0
+            UNION
+            -- Get all days with practice/call speaking
+            SELECT DISTINCT date, user_id FROM device_speaking_sessions WHERE duration_seconds > 0
           ), consecutive_days AS (
             SELECT date,
                    ROW_NUMBER() OVER (ORDER BY date DESC) as rn,
                    date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
-            FROM completed_days
+            FROM speaking_days
+            WHERE user_id = $1
           )
           SELECT COUNT(*) as streak_length
           FROM consecutive_days
-          WHERE grp = (SELECT grp FROM consecutive_days WHERE date = CURRENT_DATE)
+          WHERE grp = (
+            SELECT grp FROM consecutive_days 
+            WHERE date = (SELECT MAX(date) FROM speaking_days WHERE user_id = $1 AND date <= CURRENT_DATE)
+          )
         ) t) as current_streak,
+        
+        -- Combined speaking days
+        (SELECT COUNT(DISTINCT date) FROM (
+          SELECT date FROM daily_progress WHERE user_id = $1 AND speaking_completed = true
+          UNION
+          SELECT usage_date as date FROM daily_usage WHERE user_id = $1 AND practice_time_seconds > 0
+          UNION
+          SELECT date FROM device_speaking_sessions WHERE user_id = $1 AND duration_seconds > 0
+        ) t) as total_speaking_days,
         
         -- Perfect scores
         COUNT(CASE WHEN quiz_score = 100 THEN 1 END) as perfect_scores,
@@ -2704,11 +2926,11 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
         -- High scores (80+)
         COUNT(CASE WHEN quiz_score >= 80 THEN 1 END) as high_scores,
         
-        -- Total speaking time (in seconds)
-        COALESCE(SUM(speaking_duration_seconds), 0) as total_speaking_time,
+        -- Total speaking time (in seconds) - course-based only
+        COALESCE(SUM(speaking_duration_seconds), 0) as total_speaking_time_course,
         
-        -- Count of full 5-minute sessions (for bonus XP)
-        COUNT(CASE WHEN speaking_duration_seconds >= 299 THEN 1 END) as full_sessions,
+        -- Count of full 5-minute sessions (for bonus XP) - course-based only
+        COUNT(CASE WHEN speaking_duration_seconds >= 300 THEN 1 END) as full_sessions_course,
         
         -- Total quizzes
         COUNT(CASE WHEN quiz_completed = true THEN 1 END) as total_quizzes,
@@ -2724,13 +2946,40 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
 
     const achievementData = achievements.rows[0];
     const currentStreak = parseInt(achievementData.current_streak) || 0;
+    const totalSpeakingDays = parseInt(achievementData.total_speaking_days) || 0;
     const perfectScores = parseInt(achievementData.perfect_scores) || 0;
     const highScores = parseInt(achievementData.high_scores) || 0;
-    const totalSpeakingTime =
-      parseInt(achievementData.total_speaking_time) || 0;
-    const fullSessions = parseInt(achievementData.full_sessions) || 0;
+    const totalSpeakingTimeCourse = parseInt(achievementData.total_speaking_time_course) || 0;
+    const fullSessionsCourse = parseInt(achievementData.full_sessions_course) || 0;
     const totalQuizzes = parseInt(achievementData.total_quizzes) || 0;
     const examsPassed = parseInt(achievementData.exams_passed) || 0;
+    
+    // Get practice/roleplay time from daily_usage (includes all practice and call sessions)
+    const dailyUsageResult = await client.query(
+      `
+      SELECT 
+        COALESCE(SUM(practice_time_seconds), 0) + COALESCE(SUM(roleplay_time_seconds), 0) as total_practice_roleplay_time
+      FROM daily_usage
+      WHERE user_id = $1
+    `,
+      [userId]
+    );
+    const totalPracticeRoleplayTime = parseInt(dailyUsageResult.rows[0]?.total_practice_roleplay_time || 0, 10);
+    
+    // Get full sessions from practice/call sessions
+    const fullPracticeSessionsResult = await client.query(
+      `
+      SELECT COUNT(*) as full_sessions_practice
+      FROM device_speaking_sessions
+      WHERE user_id = $1 AND duration_seconds >= 300
+    `,
+      [userId]
+    );
+    const fullPracticeSessions = parseInt(fullPracticeSessionsResult.rows[0]?.full_sessions_practice || 0, 10);
+    
+    // Combine course-based and practice/call data
+    const totalSpeakingTime = totalSpeakingTimeCourse + totalPracticeRoleplayTime;
+    const fullSessions = fullSessionsCourse + fullPracticeSessions;
 
     // Define achievement badges
     const badges = [
@@ -2800,17 +3049,15 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
       },
     ];
 
-    // Calculate user level and XP using new formula:
-    // 2 XP per minute of actual speaking time + 10 XP bonus for each full 5-minute session
-    // + 15 XP per quiz + 50 XP per exam passed + 5 XP per streak day
-    const totalMinutes = Math.floor(totalSpeakingTime / 60);
-    const totalXP =
-      totalMinutes * 2 +
-      fullSessions * 10 +
-      totalQuizzes * 15 +
-      examsPassed * 50 +
-      currentStreak * 5;
-    const userLevel = Math.floor(totalXP / 100) + 1;
+    // Calculate user level and XP using centralized utility
+    const totalXP = calculateXP({
+      speakingSeconds: totalSpeakingTime,
+      fullSessions: fullSessions,
+      quizzes: totalQuizzes,
+      exams: examsPassed,
+      streak: currentStreak
+    });
+    const userLevel = calculateLevel(totalXP);
     const xpForNextLevel = userLevel * 100;
     const xpProgress = ((totalXP % 100) / 100) * 100;
 
@@ -2826,9 +3073,11 @@ router.get("/courses/achievements", authenticateToken, async (req, res) => {
         },
         stats: {
           currentStreak,
+          totalSpeakingDays,
           perfectScores,
           highScores,
           totalSessions: fullSessions, // For backward compatibility
+          fullSessions,
           totalQuizzes,
           examsPassed,
           totalSpeakingTime,

@@ -380,9 +380,42 @@ router.get('/onboarding/user/:user_id', authenticateToken, async (req, res) => {
       });
     }
 
+    const data = result.rows[0];
+    
+    // Validate that all required fields are present for onboarding to be considered complete
+    const requiredFields = [
+      'skill_to_improve',
+      'language_statement',
+      'industry',
+      'speaking_feelings',
+      'speaking_frequency',
+      'main_goal',
+      'gender',
+      'current_learning_methods',
+      'current_level',
+      'native_language',
+      'known_words_1',
+      'known_words_2',
+      'interests',
+      'english_style',
+      'tutor_style'
+    ];
+    
+    // Check if all required fields have values
+    const isComplete = requiredFields.every(field => {
+      const value = data[field];
+      // For array/JSONB fields, check if they have at least one item
+      if (Array.isArray(value) || (value && typeof value === 'object')) {
+        return Array.isArray(value) ? value.length > 0 : true;
+      }
+      // For string/number fields, check if they exist and are not null
+      return value !== null && value !== undefined && value !== '';
+    });
+
     res.json({
-      success: true,
-      data: result.rows[0]
+      success: isComplete,
+      data: result.rows[0],
+      isComplete: isComplete
     });
 
   } catch (error) {

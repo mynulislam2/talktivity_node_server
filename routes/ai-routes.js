@@ -1425,70 +1425,58 @@ console.log("groqResponse:", groqResponse);
   }
 });
 
-// POST /api/ai/generate-quiz-with-attempts - Generate quiz with backend attempt logic
+// POST /api/ai/generate-quiz-with-attempts - Generate quiz directly from user data
 router.post('/generate-quiz-with-attempts', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const maxAttempts = 8;
-    const attemptInterval = 5000; // 5 seconds between attempts
-    let attempts = 0;
-    let success = false;
-    let result = null;
+    const { pool } = require('../db/index');
 
-    const attemptGeneration = async () => {
-      try {
-        attempts++;
-        console.log(`Quiz generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
+    console.log(`Generating quiz for user ${userId}`);
 
-        // Get latest conversations (not just today's)
-        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
-          headers: {
-            'Authorization': req.headers.authorization
-          }
-        });
-console.log("response:", response);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch conversations: ${response.status}`);
+    // Get latest conversations directly from database
+    const conversationsResult = await pool.query(`
+      SELECT id, room_name, user_id, timestamp, transcript 
+      FROM conversations 
+      WHERE user_id = $1
+      ORDER BY timestamp DESC
+      LIMIT $2
+    `, [userId, 10]);
+
+    const conversations = conversationsResult.rows;
+
+    if (!conversations || conversations.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No conversations found for this user. Please complete some speaking sessions first.'
+      });
+    }
+
+    // Parse transcript items
+    const transcriptItems = conversations
+      .map((item) => {
+        try {
+          const parsed = JSON.parse(item.transcript);
+          return parsed.items || [];
+        } catch (error) {
+          console.error("Error parsing transcript item:", error);
+          return [];
         }
+      })
+      .flat()
+      .filter((item) => item.role === 'user' && item.content);
 
-        const data = await response.json();
-        const conversations = data?.data?.conversations;
+    if (!transcriptItems || transcriptItems.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No valid transcript items found. Please complete some speaking sessions first.'
+      });
+    }
 
-        if (!conversations || conversations.length === 0) {
-          console.log(`No conversations found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
+    console.log(`Found ${transcriptItems.length} transcript items for user ${userId}. Generating quiz...`);
 
-        // Parse transcript items
-        const transcriptItems = conversations
-          .map((item) => {
-            try {
-              const parsed = JSON.parse(item.transcript);
-              return parsed.items || [];
-            } catch (error) {
-              console.error("Error parsing transcript item:", error);
-              return [];
-            }
-          })
-          .flat()
-          .filter((item) => item.role === 'user' && item.content);
-
-        if (!transcriptItems || transcriptItems.length === 0) {
-          console.log(`No valid transcript items found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
-
-        // Always wait for the full attempt cycle before calling API
-        if (attempts < maxAttempts) {
-          console.log(`Data validation successful on attempt ${attempts}, but waiting for full attempt cycle. Will retry.`);
-          return false;
-        }
-
-        console.log(`Final attempt ${attempts} reached. Calling Groq API...`);
-
-        // Generate quiz using existing logic
-        const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
-        const systemPrompt = `You are an expert English tutor creating personalized quiz questions from the provided conversation transcript. Your goal is to help the user improve their English skills by testing their understanding of the actual conversation content.
+    // Generate quiz using Groq API
+    const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
+    const systemPrompt = `You are an expert English tutor creating personalized quiz questions from the provided conversation transcript. Your goal is to help the user improve their English skills by testing their understanding of the actual conversation content.
 
 CRITICAL REQUIREMENTS:
 1. Use ONLY real content, quotes, and details from the provided conversation transcript
@@ -1562,105 +1550,77 @@ QUALITY STANDARDS:
 - Focus on information that would be valuable to remember
 - No hypothetical questions - only based on actual conversation content`;
 
-        const userMessage = `Analyze this conversation transcript and create personalized quiz questions that will help the user improve their English skills. Focus on real content, quotes, and details from the conversation: ${JSON.stringify(transcriptItems)}`;
+    const userMessage = `Analyze this conversation transcript and create personalized quiz questions that will help the user improve their English skills. Focus on real content, quotes, and details from the conversation: ${JSON.stringify(transcriptItems)}`;
 
-        const formattedMessages = [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ];
+    const formattedMessages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ];
 
-        const groqPayload = {
-          model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
-          messages: formattedMessages,
-          temperature: 0.7,
-          max_tokens: 8192,
-          response_format: { "type": "json_object" },
-        };
-
-        const groqResponse = await fetch(groqApiUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GROQ_API}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(groqPayload),
-        });
-
-        console.log("groq response:", groqResponse);
-
-        if (!groqResponse.ok) {
-          throw new Error(`Groq API error: ${groqResponse.status}`);
-        }
-
-        const groqResult = await groqResponse.json();
-        const contentString = groqResult.choices[0].message.content;
-
-        if (!contentString) {
-          throw new Error("No content received from AI");
-        }
-
-        // Parse JSON response
-        let jsonString = contentString;
-        if (jsonString.includes('```json')) {
-          jsonString = jsonString.split('```json')[1] || jsonString;
-        } else if (jsonString.includes('```')) {
-          jsonString = jsonString.split('```')[1] || jsonString;
-        }
-
-        const startIndex = jsonString.indexOf('{');
-        const endIndex = jsonString.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-          throw new Error('AI returned malformed JSON');
-        }
-        jsonString = jsonString.substring(startIndex, endIndex + 1);
-
-        const parsedData = JSON.parse(jsonString);
-
-        // Validate structure
-        if (!parsedData || typeof parsedData !== 'object') {
-          throw new Error('AI response is not a valid object');
-        }
-
-        if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
-          throw new Error('AI response missing questions array');
-        }
-
-        if (parsedData.questions.length !== 5) {
-          throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
-        }
-
-        result = parsedData.questions;
-        success = true;
-        return true;
-
-      } catch (error) {
-        console.error(`Quiz generation attempt ${attempts} failed:`, error);
-        return false;
-      }
+    const groqPayload = {
+      model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
+      messages: formattedMessages,
+      temperature: 0.7,
+      max_tokens: 8192,
+      response_format: { "type": "json_object" },
     };
 
-    // Try immediately first
-    await attemptGeneration();
+    const groqResponse = await fetch(groqApiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(groqPayload),
+    });
 
-    // If not successful, retry with intervals
-    while (!success && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, attemptInterval));
-      await attemptGeneration();
+    if (!groqResponse.ok) {
+      throw new Error(`Groq API error: ${groqResponse.status}`);
     }
 
-    if (success && result) {
-      res.json({
-        success: true,
-        data: result,
-        attempts: attempts
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: `Failed to generate quiz after ${attempts} attempts. Please try again later.`,
-        attempts: attempts
-      });
+    const groqResult = await groqResponse.json();
+    const contentString = groqResult.choices[0].message.content;
+
+    if (!contentString) {
+      throw new Error("No content received from AI");
     }
+
+    // Parse JSON response
+    let jsonString = contentString;
+    if (jsonString.includes('```json')) {
+      jsonString = jsonString.split('```json')[1] || jsonString;
+    } else if (jsonString.includes('```')) {
+      jsonString = jsonString.split('```')[1] || jsonString;
+    }
+
+    const startIndex = jsonString.indexOf('{');
+    const endIndex = jsonString.lastIndexOf('}');
+    if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+      throw new Error('AI returned malformed JSON');
+    }
+    jsonString = jsonString.substring(startIndex, endIndex + 1);
+
+    const parsedData = JSON.parse(jsonString);
+
+    // Validate structure
+    if (!parsedData || typeof parsedData !== 'object') {
+      throw new Error('AI response is not a valid object');
+    }
+
+    if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
+      throw new Error('AI response missing questions array');
+    }
+
+    if (parsedData.questions.length !== 5) {
+      throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
+    }
+
+    console.log(`✅ Successfully generated quiz for user ${userId}`);
+
+    res.json({
+      success: true,
+      data: parsedData.questions
+    });
 
   } catch (error) {
     console.error('Error in generate-quiz-with-attempts:', error);

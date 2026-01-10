@@ -95,11 +95,49 @@ const indexExists = async (client, indexName) => {
 };
 
 
+// Initialize database functions
+const initFunctions = async () => {
+    let client;
+    try {
+        client = await pool.connect();
+        console.log('🔄 Initializing database functions...');
+
+        await client.query(`
+            CREATE OR REPLACE FUNCTION calculate_user_xp(
+                speaking_seconds INT,
+                full_sessions INT,
+                quizzes INT,
+                exams INT,
+                streak INT
+            ) RETURNS INT AS $$
+            BEGIN
+                RETURN (FLOOR(speaking_seconds / 60) * 2) + 
+                       (full_sessions * 10) + 
+                       (quizzes * 15) + 
+                       (exams * 50) + 
+                       (streak * 5);
+            END;
+            $$ LANGUAGE plpgsql;
+        `);
+
+        console.log('✅ Database functions initialized successfully');
+        return true;
+    } catch (error) {
+        console.error('❌ Error initializing database functions:', error.message);
+        return false;
+    } finally {
+        if (client) client.release();
+    }
+};
+
 // Initialize database tables
 const initTables = async () => {
     let client;
     let retryCount = 0;
     const maxRetries = 3;
+    
+    // Initialize functions first
+    await initFunctions();
     
     while (retryCount < maxRetries) {
         try {
@@ -613,13 +651,15 @@ const migrateUsersTable = async () => {
       ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE,
       ADD COLUMN IF NOT EXISTS profile_picture TEXT,
       ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'local',
-      ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS report_completed BOOLEAN DEFAULT FALSE;
     `);
     
     // Create indices for new columns
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
       CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
+      CREATE INDEX IF NOT EXISTS idx_users_report_completed ON users(report_completed);
     `);
     
     // Make password nullable for existing table

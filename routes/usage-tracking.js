@@ -68,6 +68,7 @@ const updateDailyUsage = async (userId, usageType, timeSeconds) => {
 };
 
 // Helper function to check if user can use free trial
+// User can only use free trial if they have NEVER had a free trial subscription (even if expired)
 const canUseFreeTrial = async (userId) => {
   const client = await db.pool.connect();
   try {
@@ -76,7 +77,9 @@ const canUseFreeTrial = async (userId) => {
       WHERE user_id = $1 AND is_free_trial = true
     `, [userId]);
     
-    return parseInt(result.rows[0].trial_count) === 0;
+    // If user has ever had a free trial (even expired), they cannot use it again
+    const hasEverUsedTrial = parseInt(result.rows[0].trial_count) > 0;
+    return !hasEverUsedTrial;
   } finally {
     client.release();
   }
@@ -90,7 +93,8 @@ const getLifetimeOnboardingUsage = async (client, userId) => {
     WHERE user_id = $1
   `;
   const lifetimeResult = await client.query(lifetimeQuery, [userId]);
-  return lifetimeResult.rows[0]?.total_seconds || 0;
+  // PostgreSQL returns numeric as string, convert to number
+  return parseInt(lifetimeResult.rows[0]?.total_seconds) || 0;
 };
 
 // Helper to mark onboarding call used when lifetime exhausted
@@ -168,7 +172,7 @@ router.post('/start-session', authenticateToken, async (req, res) => {
         // Compute lifetime usage
         const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
         const onboardingLimitSeconds = 5 * 60;
-        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - parseInt(lifetimeSeconds));
 
         // Source of truth is lifetime seconds; only block when none remain
         if (remainingLifetimeSeconds <= 0) {
@@ -284,11 +288,11 @@ router.post('/end-session', authenticateToken, async (req, res) => {
 
         const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
         const onboardingLimitSeconds = 5 * 60;
-        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - parseInt(lifetimeSeconds));
 
         if (remainingLifetimeSeconds <= 0) {
           await markOnboardingUsed(client, userId);
-        } else if (lifetimeSeconds >= onboardingLimitSeconds) {
+        } else if (parseInt(lifetimeSeconds) >= onboardingLimitSeconds) {
           await markOnboardingUsed(client, userId);
         }
 
@@ -434,8 +438,16 @@ router.post('/check-scenario-limit', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const subscription = await getUserSubscription(userId);
     
+    // ✅ Return gracefully for non-subscribed users (don't throw 403)
     if (!subscription) {
-      return res.status(403).json({ success: false, error: 'No active subscription' });
+      return res.json({ 
+        success: true, 
+        canCreate: false, 
+        limit: 0, 
+        used: 0, 
+        remaining: 0,
+        message: 'No active subscription' 
+      });
     }
     
     const isFreeTrial = subscription.is_free_trial && 
@@ -455,7 +467,15 @@ router.post('/check-scenario-limit', authenticateToken, async (req, res) => {
     } else if (subscription.plan_type === 'Pro') {
       maxScenarios = -1; // Unlimited for Pro
     } else {
-      return res.status(403).json({ success: false, error: 'Invalid subscription plan' });
+      // ✅ Return gracefully for invalid plans (don't throw 403)
+      return res.json({ 
+        success: true, 
+        canCreate: false, 
+        limit: 0, 
+        used: 0, 
+        remaining: 0,
+        message: 'Invalid subscription plan' 
+      });
     }
     
     const canCreate = maxScenarios === -1 || scenariosCreated < maxScenarios;
@@ -622,6 +642,10 @@ router.post('/record-roleplay-session', authenticateToken, async (req, res) => {
 router.get('/remaining-time', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    // Optional query parameters for active session tracking
+    const currentSessionDurationSeconds = parseInt(req.query.currentSessionDurationSeconds) || 0;
+    const sessionType = req.query.sessionType || 'practice'; // 'practice', 'roleplay', or 'test'
+    
     const subscription = await getUserSubscription(userId);
     
     if (!subscription) {
@@ -638,7 +662,36 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
 
         const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
         const onboardingLimitSeconds = 5 * 60;
-        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - lifetimeSeconds);
+        
+        // Check if there's a very recent session (within last 30 seconds) to prevent double-counting
+        // This handles the race condition where the session was just saved but time check still runs
+        const recentSessionQuery = await client.query(`
+          SELECT duration_seconds, created_at
+          FROM device_speaking_sessions 
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [userId]);
+        
+        const recentSession = recentSessionQuery.rows[0];
+        const now = new Date();
+        const sessionAge = recentSession ? (now - new Date(recentSession.created_at)) / 1000 : Infinity;
+        
+        // If session was saved within last 30 seconds AND its duration is close to currentSessionDurationSeconds,
+        // don't add currentSessionDurationSeconds again (already counted in lifetimeSeconds)
+        let effectiveCurrentDuration = parseInt(currentSessionDurationSeconds) || 0;
+        if (sessionAge < 30 && recentSession && 
+            Math.abs(parseInt(recentSession.duration_seconds) - effectiveCurrentDuration) < 15) {
+          console.log(`⚠️  Preventing double-count: Recent session (${sessionAge.toFixed(1)}s ago) already includes current duration`);
+          effectiveCurrentDuration = 0; // Don't double-count
+        }
+        
+        // Account for current session duration (same logic as Python agent)
+        // Ensure all values are numbers before calculation
+        const totalWouldBe = parseInt(lifetimeSeconds) + parseInt(effectiveCurrentDuration);
+        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - totalWouldBe);
+        
+        console.log(`📊 Time calculation: lifetime=${lifetimeSeconds}, current=${effectiveCurrentDuration}, total=${totalWouldBe}, remaining=${remainingLifetimeSeconds}`);
         
         if (remainingLifetimeSeconds <= 0) {
           if (!hasUsedOnboardingCall) {
@@ -651,6 +704,7 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
             dailyLimitSeconds: 0,
             canStartCall: false,
             lifetimeUsedSeconds: lifetimeSeconds,
+            currentSessionDuration: effectiveCurrentDuration,
             remainingLifetimeSeconds: 0,
             message: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.'
           });
@@ -673,6 +727,7 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
           canStartCall: true,
           isOnboardingCall: true,
           lifetimeUsedSeconds: lifetimeSeconds,
+          currentSessionDuration: effectiveCurrentDuration,
           remainingLifetimeSeconds,
           message: 'Onboarding test call available'
         });
@@ -711,17 +766,23 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
     
     if (subscription.plan_type === 'Pro') {
       const practiceLimitSeconds = 5 * 60; // 5 minutes max for practice
-      practiceRemainingSeconds = Math.max(0, practiceLimitSeconds - practiceTimeSeconds);
+      // Account for current session if it's a practice session
+      const practiceUsedWithSession = practiceTimeSeconds + (sessionType === 'practice' ? currentSessionDurationSeconds : 0);
+      practiceRemainingSeconds = Math.max(0, practiceLimitSeconds - practiceUsedWithSession);
       
       // Roleplay can use remaining time from 60-minute pool (after subtracting practice time)
       const roleplayLimitSeconds = dailyLimitSeconds - practiceLimitSeconds; // 55 minutes
-      roleplayRemainingSeconds = Math.max(0, roleplayLimitSeconds - roleplayTimeSeconds);
+      const roleplayUsedWithSession = roleplayTimeSeconds + (sessionType === 'roleplay' ? currentSessionDurationSeconds : 0);
+      roleplayRemainingSeconds = Math.max(0, roleplayLimitSeconds - roleplayUsedWithSession);
       
-      // Total remaining is for overall limit
-      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - (practiceTimeSeconds + roleplayTimeSeconds));
+      // Total remaining is for overall limit (accounting for current session)
+      const totalUsedWithSession = practiceTimeSeconds + roleplayTimeSeconds + currentSessionDurationSeconds;
+      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - totalUsedWithSession);
     } else {
       // Basic/FreeTrial: combined limit (practice + roleplay share 5 minutes)
-      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - (practiceTimeSeconds + roleplayTimeSeconds));
+      // Account for current session duration (same logic as Python agent)
+      const totalUsedWithSession = practiceTimeSeconds + roleplayTimeSeconds + currentSessionDurationSeconds;
+      remainingTimeSeconds = Math.max(0, dailyLimitSeconds - totalUsedWithSession);
       practiceRemainingSeconds = remainingTimeSeconds;
       roleplayRemainingSeconds = remainingTimeSeconds;
     }

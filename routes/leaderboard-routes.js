@@ -40,34 +40,61 @@ router.get('/weekly', authenticateToken, async (req, res) => {
     console.log('Daily progress entries in date range:', progressCountResult.rows[0].count);
 
     // Get all users with their weekly XP and level
+    // Using same formula as analytics: 2 XP per minute + 10 XP per full 5-min session + 15 XP per quiz + 50 XP per exam + 5 XP per streak
     const leaderboardQuery = `
       WITH user_weekly_stats AS (
         SELECT 
           u.id,
           u.full_name,
           u.profile_picture,
-          COALESCE(COUNT(DISTINCT dp.id) * 10, 0) as session_xp,
-          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END) * 15, 0) as quiz_xp,
-          COALESCE(COUNT(DISTINCT we.id) * 50, 0) as exam_xp,
+          -- Course-based speaking time and sessions
+          COALESCE(SUM(dp.speaking_duration_seconds), 0) as course_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.speaking_duration_seconds >= 300 THEN dp.id END), 0) as course_full_sessions,
+          -- Practice/call speaking time and sessions
+          COALESCE(SUM(dss.duration_seconds), 0) as practice_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dss.duration_seconds >= 300 THEN dss.id END), 0) as practice_full_sessions,
+          -- Quizzes and exams
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END), 0) as quiz_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN we.exam_score >= 60 THEN we.id END), 0) as exam_count,
+          -- Streak calculation: count consecutive days with any speaking activity (course-based OR practice/call)
+          -- Count days where user had speaking activity (from daily_progress OR device_speaking_sessions)
           COALESCE(
-            (SELECT COUNT(*) 
-             FROM daily_progress dp2 
-             WHERE dp2.user_id = u.id 
-             AND dp2.date >= $1 
-             AND dp2.date <= $2
-             AND dp2.speaking_completed = true
-             AND dp2.date = (
-               SELECT MAX(dp3.date) 
-               FROM daily_progress dp3 
-               WHERE dp3.user_id = u.id 
-               AND dp3.date <= dp2.date
-             )
-            ), 0
-          ) * 5 as streak_xp
+            (WITH speaking_days AS (
+              -- Get all days with course-based speaking
+              SELECT DISTINCT date
+              FROM daily_progress
+              WHERE user_id = u.id 
+                AND date >= $1 
+                AND date <= $2
+                AND speaking_completed = true
+              UNION
+              -- Get all days with practice/call speaking
+              SELECT DISTINCT date
+              FROM device_speaking_sessions
+              WHERE user_id = u.id
+                AND date >= $1 
+                AND date <= $2
+                AND duration_seconds > 0
+            ), consecutive_groups AS (
+              SELECT date,
+                     date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+              FROM speaking_days
+            )
+            SELECT COUNT(*) 
+            FROM consecutive_groups
+            WHERE grp = (
+              SELECT grp FROM consecutive_groups 
+              WHERE date = (SELECT MAX(date) FROM speaking_days WHERE date <= CURRENT_DATE)
+            )), 0
+          ) as streak_days
         FROM users u
         LEFT JOIN daily_progress dp ON u.id = dp.user_id 
           AND dp.date >= $1 
           AND dp.date <= $2
+        LEFT JOIN device_speaking_sessions dss ON u.id = dss.user_id
+          AND dss.date >= $1 
+          AND dss.date <= $2
+          AND dss.duration_seconds > 0
         LEFT JOIN weekly_exams we ON u.id = we.user_id 
           AND we.exam_date >= $1 
           AND we.exam_date <= $2
@@ -78,10 +105,29 @@ router.get('/weekly', authenticateToken, async (req, res) => {
         id,
         full_name,
         profile_picture,
-        (session_xp + quiz_xp + exam_xp + streak_xp) as total_xp,
-        FLOOR((session_xp + quiz_xp + exam_xp + streak_xp) / 100) + 1 as level
+        -- Calculate XP using DB function for consistency
+        calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) as total_xp,
+        FLOOR(calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) / 100) + 1 as level
       FROM user_weekly_stats
-      WHERE (session_xp + quiz_xp + exam_xp + streak_xp) > 0
+      WHERE calculate_user_xp(
+        (course_speaking_seconds + practice_speaking_seconds)::INT,
+        (course_full_sessions + practice_full_sessions)::INT,
+        quiz_count::INT,
+        exam_count::INT,
+        streak_days::INT
+      ) > 0
       ORDER BY total_xp DESC, level DESC
       LIMIT 50
     `;
@@ -127,30 +173,52 @@ router.get('/overall', authenticateToken, async (req, res) => {
     client = await db.pool.connect();
 
     // Get all users with their total XP and level
+    // Using same formula as analytics: 2 XP per minute + 10 XP per full 5-min session + 15 XP per quiz + 50 XP per exam + 5 XP per streak
     const leaderboardQuery = `
       WITH user_total_stats AS (
         SELECT 
           u.id,
           u.full_name,
           u.profile_picture,
-          COALESCE(COUNT(DISTINCT dp.id) * 10, 0) as session_xp,
-          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END) * 15, 0) as quiz_xp,
-          COALESCE(COUNT(DISTINCT we.id) * 50, 0) as exam_xp,
+          -- Course-based speaking time and sessions
+          COALESCE(SUM(dp.speaking_duration_seconds), 0) as course_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.speaking_duration_seconds >= 300 THEN dp.id END), 0) as course_full_sessions,
+          -- Practice/call speaking time and sessions
+          COALESCE(SUM(dss.duration_seconds), 0) as practice_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dss.duration_seconds >= 300 THEN dss.id END), 0) as practice_full_sessions,
+          -- Quizzes and exams
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END), 0) as quiz_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN we.exam_score >= 60 THEN we.id END), 0) as exam_count,
+          -- Streak calculation: count consecutive days with any speaking activity (course-based OR practice/call)
           COALESCE(
-            (SELECT COUNT(*) 
-             FROM daily_progress dp2 
-             WHERE dp2.user_id = u.id 
-             AND dp2.speaking_completed = true
-             AND dp2.date = (
-               SELECT MAX(dp3.date) 
-               FROM daily_progress dp3 
-               WHERE dp3.user_id = u.id 
-               AND dp3.date <= dp2.date
-             )
-            ), 0
-          ) * 5 as streak_xp
+            (WITH speaking_days AS (
+              -- Get all days with course-based speaking
+              SELECT DISTINCT date
+              FROM daily_progress
+              WHERE user_id = u.id 
+                AND speaking_completed = true
+              UNION
+              -- Get all days with practice/call speaking
+              SELECT DISTINCT date
+              FROM device_speaking_sessions
+              WHERE user_id = u.id
+                AND duration_seconds > 0
+            ), consecutive_groups AS (
+              SELECT date,
+                     date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+              FROM speaking_days
+            )
+            SELECT COUNT(*) 
+            FROM consecutive_groups
+            WHERE grp = (
+              SELECT grp FROM consecutive_groups 
+              WHERE date = (SELECT MAX(date) FROM speaking_days WHERE date <= CURRENT_DATE)
+            )), 0
+          ) as streak_days
         FROM users u
         LEFT JOIN daily_progress dp ON u.id = dp.user_id
+        LEFT JOIN device_speaking_sessions dss ON u.id = dss.user_id
+          AND dss.duration_seconds > 0
         LEFT JOIN weekly_exams we ON u.id = we.user_id
         WHERE u.is_admin = false
         GROUP BY u.id, u.full_name, u.profile_picture
@@ -159,10 +227,29 @@ router.get('/overall', authenticateToken, async (req, res) => {
         id,
         full_name,
         profile_picture,
-        (session_xp + quiz_xp + exam_xp + streak_xp) as total_xp,
-        FLOOR((session_xp + quiz_xp + exam_xp + streak_xp) / 100) + 1 as level
+        -- Calculate XP using DB function for consistency
+        calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) as total_xp,
+        FLOOR(calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) / 100) + 1 as level
       FROM user_total_stats
-      WHERE (session_xp + quiz_xp + exam_xp + streak_xp) > 0
+      WHERE calculate_user_xp(
+        (course_speaking_seconds + practice_speaking_seconds)::INT,
+        (course_full_sessions + practice_full_sessions)::INT,
+        quiz_count::INT,
+        exam_count::INT,
+        streak_days::INT
+      ) > 0
       ORDER BY total_xp DESC, level DESC
       LIMIT 50
     `;
@@ -235,31 +322,55 @@ router.get('/my-position', authenticateToken, async (req, res) => {
     }
 
     // Get user's XP and level
+    // Using same formula as analytics: 2 XP per minute + 10 XP per full 5-min session + 15 XP per quiz + 50 XP per exam + 5 XP per streak
     const userStatsQuery = `
       WITH user_stats AS (
         SELECT 
           u.id,
           u.full_name,
           u.profile_picture,
-          COALESCE(COUNT(DISTINCT dp.id) * 10, 0) as session_xp,
-          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END) * 15, 0) as quiz_xp,
-          COALESCE(COUNT(DISTINCT we.id) * 50, 0) as exam_xp,
+          -- Course-based speaking time and sessions
+          COALESCE(SUM(dp.speaking_duration_seconds), 0) as course_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.speaking_duration_seconds >= 300 THEN dp.id END), 0) as course_full_sessions,
+          -- Practice/call speaking time and sessions
+          COALESCE(SUM(dss.duration_seconds), 0) as practice_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dss.duration_seconds >= 300 THEN dss.id END), 0) as practice_full_sessions,
+          -- Quizzes and exams
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END), 0) as quiz_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN we.exam_score >= 60 THEN we.id END), 0) as exam_count,
+          -- Streak calculation: count consecutive days with any speaking activity (course-based OR practice/call)
           COALESCE(
-            (SELECT COUNT(*) 
-             FROM daily_progress dp2 
-             WHERE dp2.user_id = u.id 
-             ${type === 'weekly' ? 'AND dp2.date >= $2 AND dp2.date <= $3' : ''}
-             AND dp2.speaking_completed = true
-             AND dp2.date = (
-               SELECT MAX(dp3.date) 
-               FROM daily_progress dp3 
-               WHERE dp3.user_id = u.id 
-               ${type === 'weekly' ? 'AND dp3.date <= dp2.date AND dp3.date >= $2 AND dp3.date <= $3' : 'AND dp3.date <= dp2.date'}
-             )
-            ), 0
-          ) * 5 as streak_xp
+            (WITH speaking_days AS (
+              -- Get all days with course-based speaking
+              SELECT DISTINCT date
+              FROM daily_progress
+              WHERE user_id = u.id 
+                ${type === 'weekly' ? 'AND date >= $2 AND date <= $3' : ''}
+                AND speaking_completed = true
+              UNION
+              -- Get all days with practice/call speaking
+              SELECT DISTINCT date
+              FROM device_speaking_sessions
+              WHERE user_id = u.id
+                ${type === 'weekly' ? 'AND date >= $2 AND date <= $3' : ''}
+                AND duration_seconds > 0
+            ), consecutive_groups AS (
+              SELECT date,
+                     date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+              FROM speaking_days
+            )
+            SELECT COUNT(*) 
+            FROM consecutive_groups
+            WHERE grp = (
+              SELECT grp FROM consecutive_groups 
+              WHERE date = (SELECT MAX(date) FROM speaking_days WHERE date <= CURRENT_DATE)
+            )), 0
+          ) as streak_days
         FROM users u
         LEFT JOIN daily_progress dp ON u.id = dp.user_id ${type === 'weekly' ? 'AND dp.date >= $2 AND dp.date <= $3' : ''}
+        LEFT JOIN device_speaking_sessions dss ON u.id = dss.user_id
+          ${type === 'weekly' ? 'AND dss.date >= $2 AND dss.date <= $3' : ''}
+          AND dss.duration_seconds > 0
         LEFT JOIN weekly_exams we ON u.id = we.user_id ${type === 'weekly' ? 'AND we.exam_date >= $2 AND we.exam_date <= $3' : ''}
         WHERE u.id = $1
         GROUP BY u.id, u.full_name, u.profile_picture
@@ -268,8 +379,21 @@ router.get('/my-position', authenticateToken, async (req, res) => {
         id,
         full_name,
         profile_picture,
-        (session_xp + quiz_xp + exam_xp + streak_xp) as total_xp,
-        FLOOR((session_xp + quiz_xp + exam_xp + streak_xp) / 100) + 1 as level
+        -- Calculate XP using DB function for consistency
+        calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) as total_xp,
+        FLOOR(calculate_user_xp(
+          (course_speaking_seconds + practice_speaking_seconds)::INT,
+          (course_full_sessions + practice_full_sessions)::INT,
+          quiz_count::INT,
+          exam_count::INT,
+          streak_days::INT
+        ) / 100) + 1 as level
       FROM user_stats
     `;
 
@@ -287,36 +411,66 @@ router.get('/my-position', authenticateToken, async (req, res) => {
     const userLevel = userStats.level;
 
     // Get user's position by counting users with higher XP
+    // Using same formula as analytics: 2 XP per minute + 10 XP per full 5-min session + 15 XP per quiz + 50 XP per exam + 5 XP per streak
     const positionQuery = `
       WITH user_total_stats AS (
         SELECT 
           u.id,
-          COALESCE(COUNT(DISTINCT dp.id) * 10, 0) as session_xp,
-          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END) * 15, 0) as quiz_xp,
-          COALESCE(COUNT(DISTINCT we.id) * 50, 0) as exam_xp,
+          -- Course-based speaking time and sessions
+          COALESCE(SUM(dp.speaking_duration_seconds), 0) as course_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.speaking_duration_seconds >= 300 THEN dp.id END), 0) as course_full_sessions,
+          -- Practice/call speaking time and sessions
+          COALESCE(SUM(dss.duration_seconds), 0) as practice_speaking_seconds,
+          COALESCE(COUNT(DISTINCT CASE WHEN dss.duration_seconds >= 300 THEN dss.id END), 0) as practice_full_sessions,
+          -- Quizzes and exams
+          COALESCE(COUNT(DISTINCT CASE WHEN dp.quiz_completed = true THEN dp.id END), 0) as quiz_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN we.exam_score >= 60 THEN we.id END), 0) as exam_count,
+          -- Streak calculation: count consecutive days with any speaking activity (course-based OR practice/call)
           COALESCE(
-            (SELECT COUNT(*) 
-             FROM daily_progress dp2 
-             WHERE dp2.user_id = u.id 
-             ${type === 'weekly' ? 'AND dp2.date >= $2 AND dp2.date <= $3' : ''}
-             AND dp2.speaking_completed = true
-             AND dp2.date = (
-               SELECT MAX(dp3.date) 
-               FROM daily_progress dp3 
-               WHERE dp3.user_id = u.id 
-               ${type === 'weekly' ? 'AND dp3.date <= dp2.date AND dp3.date >= $2 AND dp3.date <= $3' : 'AND dp3.date <= dp2.date'}
-             )
-            ), 0
-          ) * 5 as streak_xp
+            (WITH speaking_days AS (
+              -- Get all days with course-based speaking
+              SELECT DISTINCT date
+              FROM daily_progress
+              WHERE user_id = u.id 
+                ${type === 'weekly' ? 'AND date >= $2 AND date <= $3' : ''}
+                AND speaking_completed = true
+              UNION
+              -- Get all days with practice/call speaking
+              SELECT DISTINCT date
+              FROM device_speaking_sessions
+              WHERE user_id = u.id
+                ${type === 'weekly' ? 'AND date >= $2 AND date <= $3' : ''}
+                AND duration_seconds > 0
+            ), consecutive_groups AS (
+              SELECT date,
+                     date - (ROW_NUMBER() OVER (ORDER BY date DESC) || ' days')::interval as grp
+              FROM speaking_days
+            )
+            SELECT COUNT(*) 
+            FROM consecutive_groups
+            WHERE grp = (
+              SELECT grp FROM consecutive_groups 
+              WHERE date = (SELECT MAX(date) FROM speaking_days WHERE date <= CURRENT_DATE)
+            )), 0
+          ) as streak_days
         FROM users u
         LEFT JOIN daily_progress dp ON u.id = dp.user_id ${type === 'weekly' ? 'AND dp.date >= $2 AND dp.date <= $3' : ''}
+        LEFT JOIN device_speaking_sessions dss ON u.id = dss.user_id
+          ${type === 'weekly' ? 'AND dss.date >= $2 AND dss.date <= $3' : ''}
+          AND dss.duration_seconds > 0
         LEFT JOIN weekly_exams we ON u.id = we.user_id ${type === 'weekly' ? 'AND we.exam_date >= $2 AND we.exam_date <= $3' : ''}
         WHERE u.is_admin = false
         GROUP BY u.id
       )
       SELECT COUNT(*) + 1 as position
       FROM user_total_stats
-      WHERE (session_xp + quiz_xp + exam_xp + streak_xp) > $1
+      WHERE calculate_user_xp(
+        (course_speaking_seconds + practice_speaking_seconds)::INT,
+        (course_full_sessions + practice_full_sessions)::INT,
+        quiz_count::INT,
+        exam_count::INT,
+        streak_days::INT
+      ) > $1
     `;
 
     const positionResult = await client.query(positionQuery, [userXP, ...params.slice(1)]);
