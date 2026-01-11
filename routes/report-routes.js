@@ -106,7 +106,7 @@ router.get('/generate-report', authenticateToken, async (req, res) => {
       headers: {
         'Authorization': token, // Forward the JWT token
       },
-      timeout: 120000, // 2 minutes timeout for report generation
+      timeout: 150000, // 150 seconds (2.5 minutes) - Python API waits up to 120 seconds for conversation to complete
       validateStatus: function (status) {
         return status < 500; // Don't throw for 4xx errors, let us handle them
       },

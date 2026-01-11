@@ -135,22 +135,26 @@ async def generate_report(
         
         # Wait for current transcript using async/await (not retries)
         # This efficiently blocks until transcript is available using asyncio.Event
-        # Maximum wait: 10 seconds (should be available much faster via event hooks)
-        logger.info("Waiting for transcript to become available for user %s...", user_id)
-        current_transcript = await wait_for_transcript(user_id, timeout=10.0)
+        # Wait up to 120 seconds (2 minutes) for the conversation to complete
+        logger.info("⏳ Waiting for conversation to complete and transcript to become available for user %s (max 120 seconds)...", user_id)
+        current_transcript = await wait_for_transcript(user_id, timeout=120.0)
         
-        if current_transcript:
-            messages = current_transcript.get("messages", current_transcript.get("items", []))
-            logger.info(
-                "✅ Transcript available for user %s (items: %s)",
-                user_id,
-                len(messages),
-            )
-        else:
-            logger.warning(
-                "⚠️ No transcript available for user %s after waiting",
+        if not current_transcript:
+            logger.error(
+                "❌ No transcript available for user %s after waiting 120 seconds",
                 user_id,
             )
+            return GenerateReportResponse(
+                success=False,
+                error="Conversation data not available. Please ensure the conversation has completed.",
+            )
+        
+        messages = current_transcript.get("messages", current_transcript.get("items", []))
+        logger.info(
+            "✅ Transcript available for user %s (items: %s)",
+            user_id,
+            len(messages),
+        )
         
         # Get database connection
         conn = await _get_connection()
@@ -163,57 +167,31 @@ async def generate_report(
                 user_id,
             )
             
-            # Combine previous conversations + current transcript (if available)
+            # Combine previous conversations + current transcript
             combined_turns = _flatten_transcripts(
                 previous_conversations,
-                current_transcript or {}
+                current_transcript
             )
             
             logger.info(
                 "Combined turns: previous=%s, current_items=%s, total=%s",
                 len(previous_conversations),
-                len(current_transcript.get("messages", current_transcript.get("items", []))) if current_transcript else 0,
+                len(messages),
                 len(combined_turns),
             )
             
-            # If no combined turns, wait a bit more and check again (handles race conditions)
+            # If no combined turns after waiting, return error
             if not combined_turns:
-                logger.warning(
-                    "No combined turns initially for user %s - waiting for events to complete (previous=%s, current=%s)",
+                logger.error(
+                    "❌ No combined turns available for user %s after waiting (previous=%s, current_items=%s)",
                     user_id,
                     len(previous_conversations),
-                    bool(current_transcript),
+                    len(messages),
                 )
-                
-                # Wait a bit more for any pending events (like conversation_item_added)
-                await asyncio.sleep(0.5)
-                
-                # Try getting transcript one more time
-                current_transcript = await get_current_transcript(user_id)
-                if current_transcript:
-                    messages = current_transcript.get("messages", current_transcript.get("items", []))
-                    logger.info(
-                        "Retry: Found transcript after wait (items: %s)",
-                        len(messages),
-                    )
-                
-                # Re-combine with potentially new transcript
-                combined_turns = _flatten_transcripts(
-                    previous_conversations,
-                    current_transcript or {}
+                return GenerateReportResponse(
+                    success=False,
+                    error="No conversation data available for analysis. Please try again after completing a conversation.",
                 )
-                
-                if not combined_turns:
-                    logger.error(
-                        "No combined turns available for user %s after retry (previous=%s, current=%s)",
-                        user_id,
-                        len(previous_conversations),
-                        bool(current_transcript),
-                    )
-                    return GenerateReportResponse(
-                        success=False,
-                        error="No conversation data available for analysis. Please try again in a moment.",
-                    )
             
             # Filter to user messages only (matching Node.js logic: item.role === 'user' && item.content)
             transcript_items = [

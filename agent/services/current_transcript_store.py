@@ -48,16 +48,17 @@ async def get_current_transcript(user_id: int) -> Optional[Dict[str, Any]]:
 
 async def wait_for_transcript(
     user_id: int, 
-    timeout: float = 10.0,
+    timeout: float = 120.0,
     check_interval: float = 0.1
 ) -> Optional[Dict[str, Any]]:
     """
     Wait for transcript to become available using async/await (not retries).
     Uses asyncio.Event for efficient waiting - blocks until transcript is available.
+    This will wait until the conversation is complete and transcript is ready.
     
     Args:
         user_id: User ID to wait for
-        timeout: Maximum time to wait in seconds (default: 10 seconds)
+        timeout: Maximum time to wait in seconds (default: 120 seconds / 2 minutes)
         check_interval: How often to check if transcript exists (default: 0.1 seconds)
     
     Returns:
