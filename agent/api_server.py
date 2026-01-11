@@ -20,6 +20,7 @@ from services.report_service import (
 )
 from services.current_transcript_store import (
     get_current_transcript,
+    wait_for_transcript,
     remove_current_transcript,
 )
 
@@ -132,49 +133,22 @@ async def generate_report(
     try:
         user_id = user["userId"]
         
-        # Wait 5 seconds to ensure transcript is fully available after call ends
-        logger.info("Waiting 5 seconds for transcript to be fully available...")
-        await asyncio.sleep(5)
+        # Wait for current transcript using async/await (not retries)
+        # This efficiently blocks until transcript is available using asyncio.Event
+        # Maximum wait: 10 seconds (should be available much faster via event hooks)
+        logger.info("Waiting for transcript to become available for user %s...", user_id)
+        current_transcript = await wait_for_transcript(user_id, timeout=10.0)
         
-        # Get current transcript from in-memory store (if available)
-        current_transcript = await get_current_transcript(user_id)
         if current_transcript:
-            # Verify format - check for both "messages" and "items" keys
-            has_messages = "messages" in current_transcript
-            has_items = "items" in current_transcript
-            logger.info(
-                "Current transcript format check - has_messages: %s, has_items: %s, keys: %s",
-                has_messages,
-                has_items,
-                list(current_transcript.keys()),
-            )
-            
             messages = current_transcript.get("messages", current_transcript.get("items", []))
             logger.info(
-                "Found current transcript for user %s (items: %s, has_content: %s)",
+                "✅ Transcript available for user %s (items: %s)",
                 user_id,
                 len(messages),
-                len(messages) > 0,
             )
-            
-            # Log sample message structure if available
-            if messages and len(messages) > 0:
-                sample_msg = messages[0]
-                logger.info(
-                    "Sample message structure - keys: %s, has_role: %s, has_content: %s",
-                    list(sample_msg.keys()) if isinstance(sample_msg, dict) else "not_dict",
-                    "role" in sample_msg if isinstance(sample_msg, dict) else False,
-                    "content" in sample_msg if isinstance(sample_msg, dict) else False,
-                )
-            
-            if not messages or len(messages) == 0:
-                logger.warning(
-                    "Current transcript for user %s exists but has no messages",
-                    user_id,
-                )
         else:
             logger.warning(
-                "No current transcript found for user %s (session may have ended or not started)",
+                "⚠️ No transcript available for user %s after waiting",
                 user_id,
             )
         
@@ -202,17 +176,44 @@ async def generate_report(
                 len(combined_turns),
             )
             
+            # If no combined turns, wait a bit more and check again (handles race conditions)
             if not combined_turns:
-                logger.error(
-                    "No combined turns available for user %s (previous=%s, current=%s)",
+                logger.warning(
+                    "No combined turns initially for user %s - waiting for events to complete (previous=%s, current=%s)",
                     user_id,
                     len(previous_conversations),
                     bool(current_transcript),
                 )
-                return GenerateReportResponse(
-                    success=False,
-                    error="No conversation data available for analysis",
+                
+                # Wait a bit more for any pending events (like conversation_item_added)
+                await asyncio.sleep(0.5)
+                
+                # Try getting transcript one more time
+                current_transcript = await get_current_transcript(user_id)
+                if current_transcript:
+                    messages = current_transcript.get("messages", current_transcript.get("items", []))
+                    logger.info(
+                        "Retry: Found transcript after wait (items: %s)",
+                        len(messages),
+                    )
+                
+                # Re-combine with potentially new transcript
+                combined_turns = _flatten_transcripts(
+                    previous_conversations,
+                    current_transcript or {}
                 )
+                
+                if not combined_turns:
+                    logger.error(
+                        "No combined turns available for user %s after retry (previous=%s, current=%s)",
+                        user_id,
+                        len(previous_conversations),
+                        bool(current_transcript),
+                    )
+                    return GenerateReportResponse(
+                        success=False,
+                        error="No conversation data available for analysis. Please try again in a moment.",
+                    )
             
             # Filter to user messages only (matching Node.js logic: item.role === 'user' && item.content)
             transcript_items = [

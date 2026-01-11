@@ -185,28 +185,38 @@ async def entrypoint(ctx: JobContext):
     async def write_transcript():
         # IMPORTANT: Store final transcript in memory BEFORE saving to DB
         # This ensures it's available for immediate report generation
+        # This is a final fallback to ensure transcript is stored even if other mechanisms fail
         if user_id:
             try:
-                transcript_data = session.history.to_dict()
-                room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
-                transcript_data["room_name"] = room_name
-                
-                # Check if transcript has content before storing
-                messages = transcript_data.get("messages", transcript_data.get("items", []))
-                if messages and len(messages) > 0:
-                    await set_current_transcript(user_id, transcript_data)
+                # Wait for any pending transcript update tasks
+                if pending_transcript_updates:
                     logger.info(
-                        "Stored final transcript for user %s before saving to DB (items: %s)",
+                        "Shutdown: Waiting for %s pending transcript update tasks for user %s",
+                        len(pending_transcript_updates),
                         user_id,
-                        len(messages),
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*pending_transcript_updates, return_exceptions=True),
+                            timeout=1.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Timeout waiting for pending transcript updates during shutdown")
+                
+                # Final attempt to store transcript
+                success = await store_transcript_safely()
+                if success:
+                    logger.info(
+                        "✅ Stored final transcript in shutdown callback for user %s",
+                        user_id,
                     )
                 else:
                     logger.warning(
-                        "Final transcript for user %s has no messages, skipping store",
+                        "⚠️ Failed to store transcript in shutdown callback for user %s",
                         user_id,
                     )
             except Exception as e:
-                logger.warning("Error storing final transcript: %s", e)
+                logger.error("❌ Error storing final transcript in shutdown callback: %s", e, exc_info=True)
         
         # Save transcript to database
         await save_session_transcript(
@@ -233,18 +243,8 @@ async def entrypoint(ctx: JobContext):
             try:
                 await asyncio.sleep(update_interval)
                 
-                # Get current transcript from session
-                try:
-                    transcript_data = session.history.to_dict()
-                    # Add room_name if available
-                    room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
-                    transcript_data["room_name"] = room_name
-                    
-                    # Store in the in-memory store
-                    await set_current_transcript(user_id, transcript_data)
-                except Exception as e:
-                    logger.debug("Error updating current transcript: %s", e)
-                    # Continue even if update fails
+                # Periodic fallback update using safe storage function
+                await store_transcript_safely()
                     
             except asyncio.CancelledError:
                 logger.debug("Current transcript update task cancelled")
@@ -297,6 +297,39 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.debug("Error storing initial transcript: %s", e)
     
+    # Track pending transcript update tasks to ensure they complete
+    pending_transcript_updates = set()
+    
+    # Helper function to safely store transcript with error handling
+    async def store_transcript_safely():
+        """Safely store transcript with comprehensive error handling."""
+        if not user_id:
+            return False
+        
+        try:
+            transcript_data = session.history.to_dict()
+            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
+            transcript_data["room_name"] = room_name
+            messages = transcript_data.get("messages", transcript_data.get("items", []))
+            
+            if messages and len(messages) > 0:
+                await set_current_transcript(user_id, transcript_data)
+                logger.debug(
+                    "✅ Stored transcript for user %s (items: %s)",
+                    user_id,
+                    len(messages),
+                )
+                return True
+            else:
+                logger.debug(
+                    "⚠️ Transcript has no messages for user %s",
+                    user_id,
+                )
+                return False
+        except Exception as e:
+            logger.error("❌ Error storing transcript for user %s: %s", user_id, e, exc_info=True)
+            return False
+    
     # Real-time transcript update handler - updates store immediately when messages are added
     async def update_transcript_immediately():
         """Update transcript store immediately when conversation items are added."""
@@ -304,15 +337,7 @@ async def entrypoint(ctx: JobContext):
             return
         
         try:
-            transcript_data = session.history.to_dict()
-            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
-            transcript_data["room_name"] = room_name
-            await set_current_transcript(user_id, transcript_data)
-            logger.debug(
-                "Real-time transcript update for user %s (items: %s)",
-                user_id,
-                len(transcript_data.get("messages", transcript_data.get("items", []))),
-            )
+            await store_transcript_safely()
         except Exception as e:
             logger.debug("Error in real-time transcript update: %s", e)
             # Don't break the session if transcript update fails
@@ -322,11 +347,19 @@ async def entrypoint(ctx: JobContext):
         @session.on("conversation_item_added")
         def on_conversation_item_added(event):
             """Event handler that updates transcript store immediately when messages are added."""
-            # Schedule async update without blocking
-            asyncio.create_task(update_transcript_immediately())
+            # Schedule async update and track it
+            task = asyncio.create_task(update_transcript_immediately())
+            pending_transcript_updates.add(task)
+            
+            # Remove task from set when it completes
+            def cleanup_task(t):
+                pending_transcript_updates.discard(t)
+            
+            task.add_done_callback(cleanup_task)
             logger.debug(
-                "Conversation item added for user %s, updating transcript store",
+                "Conversation item added for user %s, updating transcript store (pending tasks: %s)",
                 user_id,
+                len(pending_transcript_updates),
             )
     
     try:
@@ -425,12 +458,67 @@ async def entrypoint(ctx: JobContext):
         time_check_task = asyncio.create_task(check_time_periodically())
         
         # Register participant disconnect handler to stop time check immediately
+        # AND store transcript IMMEDIATELY when participant disconnects
         @ctx.room.on("participant_disconnected")
         def on_participant_disconnect(participant_disconnected):
             nonlocal session_disconnected
             if participant_disconnected.identity == participant.identity:
                 logger.info(f"Participant {participant.identity} disconnected, stopping time check immediately")
                 session_disconnected = True
+                
+                # CRITICAL: Store transcript IMMEDIATELY when participant disconnects
+                # According to LiveKit docs: with close_on_disconnect enabled (default),
+                # incomplete agent turns are received immediately when user leaves via conversation_item_added
+                # We capture the transcript right after disconnect to ensure it's available
+                if user_id:
+                    async def store_transcript_on_disconnect():
+                        """
+                        Real-time transcript storage on disconnect.
+                        Transcript should already be stored via conversation_item_added events,
+                        but we do a final store to ensure latest state is captured.
+                        """
+                        try:
+                            # Wait for any pending transcript update tasks to complete
+                            # This ensures all real-time updates from conversation_item_added are done
+                            if pending_transcript_updates:
+                                logger.info(
+                                    "Waiting for %s pending real-time transcript updates to complete for user %s",
+                                    len(pending_transcript_updates),
+                                    user_id,
+                                )
+                                try:
+                                    await asyncio.wait_for(
+                                        asyncio.gather(*pending_transcript_updates, return_exceptions=True),
+                                        timeout=1.0  # Short timeout - should be instant
+                                    )
+                                except asyncio.TimeoutError:
+                                    logger.debug(
+                                        "Some transcript update tasks still pending for user %s (continuing anyway)",
+                                        user_id,
+                                    )
+                            
+                            # Brief wait to ensure any final conversation_item_added events have fired
+                            # (for incomplete turns flushed on disconnect per LiveKit docs)
+                            await asyncio.sleep(0.2)
+                            
+                            # Final real-time store - transcript should already be there from events
+                            # This just ensures we have the absolute latest state
+                            success = await store_transcript_safely()
+                            if success:
+                                logger.info(
+                                    "✅ Stored final transcript on participant disconnect for user %s (real-time)",
+                                    user_id,
+                                )
+                            else:
+                                logger.debug(
+                                    "Transcript storage returned False for user %s (may already be stored via events)",
+                                    user_id,
+                                )
+                        except Exception as e:
+                            logger.error("❌ Error storing transcript on disconnect for user %s: %s", user_id, e, exc_info=True)
+                    
+                    # Schedule immediately - this runs before shutdown callbacks
+                    asyncio.create_task(store_transcript_on_disconnect())
         
         # Clean up task when session ends
         async def cleanup_time_check():
