@@ -655,6 +655,42 @@ async def fetch_user_conversations(
     return rows
 
 
+async def save_current_transcript_to_db(
+    conn: asyncpg.Connection,
+    user_id: int,
+    room_name: str,
+    transcript_data: Dict[str, Any],
+) -> bool:
+    """
+    Save the current transcript to the database.
+    Called after generating a report to persist the current conversation.
+    """
+    try:
+        await conn.execute(
+            """
+            INSERT INTO conversations (room_name, user_id, timestamp, transcript)
+            VALUES ($1, $2, $3, $4)
+            """,
+            room_name,
+            user_id,
+            datetime.now(),
+            json.dumps(transcript_data),
+        )
+        logger.info(
+            "Saved current transcript to DB for user %s in room %s",
+            user_id,
+            room_name,
+        )
+        return True
+    except Exception as e:
+        logger.error(
+            "Error saving current transcript to DB for user %s: %s",
+            user_id,
+            e,
+        )
+        return False
+
+
 async def generate_report_with_groq(
     user_id: int,
     transcript_items: List[Dict[str, Any]],

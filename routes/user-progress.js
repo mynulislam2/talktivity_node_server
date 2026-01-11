@@ -80,7 +80,7 @@ router.get("/progress", authenticateToken, async (req, res) => {
       const reportResult = await client.query(reportQuery, [userId]);
       const hasViewedReport = reportResult.rows[0]?.report_completed || false;
 
-      // 4. Check subscription status
+      // 4. Check subscription status (match getUserSubscription logic from usage-tracking.js)
       const subscriptionQuery = `
         SELECT 
           s.status,
@@ -91,8 +91,8 @@ router.get("/progress", authenticateToken, async (req, res) => {
           sp.name as plan_type
         FROM subscriptions s
         LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
-        WHERE s.user_id = $1
-        ORDER BY s.created_at DESC
+        WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+        ORDER BY s.end_date DESC
         LIMIT 1
       `;
       const subscriptionResult = await client.query(subscriptionQuery, [userId]);
@@ -107,6 +107,19 @@ router.get("/progress", authenticateToken, async (req, res) => {
         (subscription.status === 'trialing') ||
         isFreeTrial
       );
+      
+      // Log subscription detection for debugging
+      if (subscription) {
+        console.log(`📊 Progress API: Found subscription for user ${userId}`, {
+          status: subscription.status,
+          planType: subscription.plan_type,
+          isFreeTrial: isFreeTrial,
+          endDate: subscription.end_date,
+          hasActiveSubscription: hasActiveSubscription
+        });
+      } else {
+        console.log(`📊 Progress API: No active subscription found for user ${userId}`);
+      }
 
       // 5. Check conversation experience (has any conversations)
       const conversationQuery = `

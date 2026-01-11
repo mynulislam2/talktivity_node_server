@@ -19,6 +19,7 @@ from agent import EmotiveAgent
 from config import API_URL, GOOGLE_API_KEY, logger
 from db import check_daily_time_limit, get_remaining_time_during_call, test_postgres_connection
 from services.transcript_service import save_session_transcript
+from services.current_transcript_store import set_current_transcript, remove_current_transcript
 import httpx
 
 
@@ -172,8 +173,42 @@ async def entrypoint(ctx: JobContext):
 
     # Function to save the transcript when the session ends
     session_start_time = datetime.now()
+    
+    # Store user_id if available (for storing current transcript)
+    user_id = None
+    if participant.identity.startswith("user_"):
+        try:
+            user_id = int(participant.identity.replace("user_", ""))
+        except ValueError:
+            pass
 
     async def write_transcript():
+        # IMPORTANT: Store final transcript in memory BEFORE saving to DB
+        # This ensures it's available for immediate report generation
+        if user_id:
+            try:
+                transcript_data = session.history.to_dict()
+                room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
+                transcript_data["room_name"] = room_name
+                
+                # Check if transcript has content before storing
+                messages = transcript_data.get("messages", transcript_data.get("items", []))
+                if messages and len(messages) > 0:
+                    await set_current_transcript(user_id, transcript_data)
+                    logger.info(
+                        "Stored final transcript for user %s before saving to DB (items: %s)",
+                        user_id,
+                        len(messages),
+                    )
+                else:
+                    logger.warning(
+                        "Final transcript for user %s has no messages, skipping store",
+                        user_id,
+                    )
+            except Exception as e:
+                logger.warning("Error storing final transcript: %s", e)
+        
+        # Save transcript to database
         await save_session_transcript(
             session=session,
             ctx=ctx,
@@ -181,9 +216,57 @@ async def entrypoint(ctx: JobContext):
             session_type=session_type,
             session_start_time=session_start_time,
         )
+        # NOTE: Don't remove from in-memory store here - let the report API remove it
+        # after generating the report. This ensures it's available immediately after call ends.
 
     # Add the transcript saving function as a shutdown callback
     ctx.add_shutdown_callback(write_transcript)
+    
+    # Periodically update the current transcript in the store (every 5 seconds)
+    async def update_current_transcript_periodically():
+        """Update the current transcript in the store periodically."""
+        if not user_id:
+            return
+        
+        update_interval = 5  # Update every 5 seconds as fallback (events handle real-time)
+        while True:
+            try:
+                await asyncio.sleep(update_interval)
+                
+                # Get current transcript from session
+                try:
+                    transcript_data = session.history.to_dict()
+                    # Add room_name if available
+                    room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
+                    transcript_data["room_name"] = room_name
+                    
+                    # Store in the in-memory store
+                    await set_current_transcript(user_id, transcript_data)
+                except Exception as e:
+                    logger.debug("Error updating current transcript: %s", e)
+                    # Continue even if update fails
+                    
+            except asyncio.CancelledError:
+                logger.debug("Current transcript update task cancelled")
+                break
+            except Exception as e:
+                logger.warning("Error in current transcript update task: %s", e)
+                await asyncio.sleep(update_interval)
+    
+    # Start the periodic update task
+    if user_id:
+        transcript_update_task = asyncio.create_task(update_current_transcript_periodically())
+        
+        # Clean up task when session ends
+        async def cleanup_transcript_update():
+            if transcript_update_task and not transcript_update_task.done():
+                transcript_update_task.cancel()
+                try:
+                    await transcript_update_task
+                except asyncio.CancelledError:
+                    pass
+        
+        ctx.add_shutdown_callback(cleanup_transcript_update)
 
     # Create the agent with custom prompts from metadata
     agent = EmotiveAgent(custom_prompt=custom_prompt, first_prompt=first_prompt)
@@ -202,6 +285,49 @@ async def entrypoint(ctx: JobContext):
             # ),
         ),
     )
+    
+    # Store initial transcript (empty at start, but sets up the store entry)
+    if user_id:
+        try:
+            transcript_data = session.history.to_dict()
+            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
+            transcript_data["room_name"] = room_name
+            await set_current_transcript(user_id, transcript_data)
+            logger.debug("Stored initial transcript for user %s", user_id)
+        except Exception as e:
+            logger.debug("Error storing initial transcript: %s", e)
+    
+    # Real-time transcript update handler - updates store immediately when messages are added
+    async def update_transcript_immediately():
+        """Update transcript store immediately when conversation items are added."""
+        if not user_id:
+            return
+        
+        try:
+            transcript_data = session.history.to_dict()
+            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
+            transcript_data["room_name"] = room_name
+            await set_current_transcript(user_id, transcript_data)
+            logger.debug(
+                "Real-time transcript update for user %s (items: %s)",
+                user_id,
+                len(transcript_data.get("messages", transcript_data.get("items", []))),
+            )
+        except Exception as e:
+            logger.debug("Error in real-time transcript update: %s", e)
+            # Don't break the session if transcript update fails
+    
+    # Hook into conversation_item_added event for real-time transcript updates
+    if user_id:
+        @session.on("conversation_item_added")
+        def on_conversation_item_added(event):
+            """Event handler that updates transcript store immediately when messages are added."""
+            # Schedule async update without blocking
+            asyncio.create_task(update_transcript_immediately())
+            logger.debug(
+                "Conversation item added for user %s, updating transcript store",
+                user_id,
+            )
     
     try:
         await session.say("Hi! how are you doing!")
