@@ -2,12 +2,13 @@ from typing import Any, Dict, Optional
 
 import jwt
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import JWT_SECRET, logger
+import os
 from services.report_service import (
     _get_connection,
     fetch_user_conversations,
@@ -39,14 +40,22 @@ class GenerateReportResponse(BaseModel):
 
 app = FastAPI(title="Talktivity Voice Report API")
 
-# Add CORS middleware to allow frontend requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific frontend URL
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS needed - this API is only called internally by Node.js server
+# All external requests go through Node.js which handles CORS
+
+# Simple request logging middleware
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        method = request.method
+        path = request.url.path
+        logger.info(f"🔍 {method} {path}")
+        
+        response = await call_next(request)
+        logger.info(f"✅ {method} {path} - Status: {response.status_code}")
+        
+        return response
+
+app.add_middleware(LoggingMiddleware)
 
 security = HTTPBearer()
 
@@ -97,15 +106,22 @@ async def analyze_session(payload: AnalyzeSessionRequest) -> AnalyzeSessionRespo
         raise HTTPException(status_code=500, detail="Failed to generate report")
 
 
-@app.post("/generate-report", response_model=GenerateReportResponse)
+# Test endpoint to verify POST works
+@app.post("/test-post")
+async def test_post(request: Request):
+    """Test endpoint to verify POST requests work"""
+    logger.info(f"✅ TEST POST received! Headers: {dict(request.headers)}")
+    return {"success": True, "message": "POST request received successfully"}
+
+@app.get("/generate-report", response_model=GenerateReportResponse)
 async def generate_report(
-    payload: GenerateReportRequest,
+    request: Request,
     user: Dict[str, Any] = Depends(verify_token),
 ) -> GenerateReportResponse:
     """
     Generate report for test calls using Groq API.
-    Fetches previous conversations from database, combines with current transcript,
-    and generates report matching Node.js implementation.
+    Fetches previous conversations from database and generates report.
+    GET method - no body needed, fetches all data from database.
     """
     try:
         user_id = user["userId"]
@@ -121,8 +137,8 @@ async def generate_report(
                 user_id,
             )
             
-            # Combine previous conversations with current transcript
-            current_transcript = payload.current_transcript or {}
+            # Combine previous conversations (no current_transcript for GET - fetch all from DB)
+            current_transcript = {}  # GET doesn't accept body, fetch all from DB
             combined_turns = _flatten_transcripts(previous_conversations, current_transcript)
             
             if not combined_turns:
