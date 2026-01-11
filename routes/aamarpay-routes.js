@@ -22,7 +22,7 @@ const Pay = new Payment(
   SIGNATURE_KEY,
   isSandbox
 );
-
+console.log(Pay,Pay)
 // Helper function to get plan details
 const getPlanDetails = async (planType) => {
   let client;
