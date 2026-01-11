@@ -83,37 +83,70 @@ router.get('/generate-report', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const token = req.headers.authorization; // Get the JWT token from request
     
-    // Python API URL (internal call, no CORS needed)
+    // Python API URL - use environment variable or default
+    // For production (Render), set PYTHON_API_URL=https://api.talktivity.app
+    // For local dev, use http://localhost:8090
     const pythonApiUrl = process.env.PYTHON_API_URL || 'http://localhost:8090';
     
-    console.log(`Proxying report generation request to Python API for user ${userId}`);
+    if (!pythonApiUrl || pythonApiUrl === 'undefined') {
+      console.error('PYTHON_API_URL is not configured');
+      return res.status(500).json({
+        success: false,
+        error: 'Python API server is not configured. Please contact support.',
+      });
+    }
     
-    // Call Python API internally (server-to-server, no CORS)
-    const pythonResponse = await axios.get(`${pythonApiUrl}/generate-report`, {
+    const fullUrl = `${pythonApiUrl}/generate-report`;
+    console.log(`Proxying report generation request to Python API for user ${userId}`);
+    console.log(`Python API URL: ${fullUrl}`);
+    
+    // Call Python API (server-to-server, no CORS needed)
+    const startTime = Date.now();
+    const pythonResponse = await axios.get(fullUrl, {
       headers: {
         'Authorization': token, // Forward the JWT token
       },
       timeout: 120000, // 2 minutes timeout for report generation
+      validateStatus: function (status) {
+        return status < 500; // Don't throw for 4xx errors, let us handle them
+      },
     });
+    
+    const duration = Date.now() - startTime;
+    console.log(`Python API responded in ${duration}ms with status ${pythonResponse.status}`);
+    
+    // Check if Python API returned an error
+    if (pythonResponse.status >= 400) {
+      return res.status(pythonResponse.status).json({
+        success: false,
+        error: pythonResponse.data?.error || 'Failed to generate report',
+      });
+    }
     
     // Return Python API response directly
     return res.json(pythonResponse.data);
     
   } catch (error) {
-    console.error('Error proxying to Python API:', error);
+    console.error('Error proxying to Python API:', error.message);
     
     // Handle axios errors
-    if (error.response) {
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      // Python API is not reachable
+      return res.status(503).json({
+        success: false,
+        error: 'Python API server is not available. Please check PYTHON_API_URL configuration.',
+      });
+    } else if (error.response) {
       // Python API returned an error
       return res.status(error.response.status).json({
         success: false,
         error: error.response.data?.error || 'Failed to generate report',
       });
     } else if (error.request) {
-      // Python API is not reachable
+      // Request was made but no response received
       return res.status(503).json({
         success: false,
-        error: 'Python API server is not available. Please try again later.',
+        error: 'Python API server did not respond. Please try again later.',
       });
     } else {
       // Other error
