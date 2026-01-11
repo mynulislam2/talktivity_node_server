@@ -1,0 +1,18 @@
+diff --git a/node_modules/aamarpay.v2/dist/index.js b/node_modules/aamarpay.v2/dist/index.js
+index 8ebee26..ecf8dbd 100644
+--- a/node_modules/aamarpay.v2/dist/index.js
++++ b/node_modules/aamarpay.v2/dist/index.js
+@@ -137,7 +137,12 @@ var PaymentInit = (_0) => __async(void 0, [_0], function* ({
+   try {
+     let apiUrl = "https://sandbox.aamarpay.com/jsonpost.php";
+     if (live) {
+-      apiUrl = "https://secure.aamarpay.com";
++      // Use the JSON post endpoint for live environment as well
++      // (the original package used the root domain which can cause "Invalid Store ID"
++      // for live credentials). Using /jsonpost.php matches the sandbox path and
++      // AamarPay's JSON API expectations.
++      // Allow override via environment variable
++      apiUrl = process.env.AAMARPAY_API_URL || "https://secure.aamarpay.com/jsonpost.php";
+     }
+     const requestData_pay = __spreadProps(__spreadValues({}, verifyAamarpayData(data)), {
+       store_id,

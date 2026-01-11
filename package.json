@@ -10,7 +10,7 @@
         "build:agent": "tsc -p tsconfig.json",
         "start:agent": "node dist/agent/index.js dev",
         "dev:agent": "npm run build:agent && npm run start:agent",
-        "download:agent-files": "npm run build:agent && node dist/agent/index.js download-files"
+        "postinstall": "patch-package"
     },
     "dependencies": {
         "@getbrevo/brevo": "^3.0.1",
