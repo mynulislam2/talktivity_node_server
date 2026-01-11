@@ -80,7 +80,7 @@ router.get("/progress", authenticateToken, async (req, res) => {
       const reportResult = await client.query(reportQuery, [userId]);
       const hasViewedReport = reportResult.rows[0]?.report_completed || false;
 
-      // 4. Check subscription status (match getUserSubscription logic from usage-tracking.js)
+      // 4. Check subscription status (match getUserSubscription logic from usage-tracking.js exactly)
       const subscriptionQuery = `
         SELECT 
           s.status,
@@ -88,9 +88,9 @@ router.get("/progress", authenticateToken, async (req, res) => {
           s.free_trial_started_at,
           s.start_date,
           s.end_date,
-          sp.name as plan_type
+          sp.plan_type
         FROM subscriptions s
-        LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+        JOIN subscription_plans sp ON s.plan_id = sp.id
         WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
         ORDER BY s.end_date DESC
         LIMIT 1
