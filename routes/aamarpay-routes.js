@@ -18,11 +18,11 @@ const isSandbox = false; // try live mode to match merchant credentials
 console.log('AamarPay hardcoded config: store_id=talktivity, sandbox=false (live)');
 
 const Pay = new Payment(
-  STORE_ID,
-  SIGNATURE_KEY,
-  isSandbox
+   STORE_ID,
+   SIGNATURE_KEY,
+   true
 );
-console.log(Pay,Pay)
+
 // Helper function to get plan details
 const getPlanDetails = async (planType) => {
   let client;
