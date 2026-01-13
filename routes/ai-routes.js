@@ -755,244 +755,245 @@ QUALITY ASSURANCE:
 //   }
 // });
 
-// POST /api/ai/generate-listening-quiz - Proxy for generating listening comprehension quiz based on conversation
-router.post('/generate-listening-quiz', authenticateToken, async (req, res) => {
-  try {
-    const { conversation } = req.body;
+// GET /api/ai/generate-listening-quiz - Generate listening quiz directly from database
+// OLD POST endpoint (removed - now using GET with database fetch)
+// router.post('/generate-listening-quiz', authenticateToken, async (req, res) => {
+//   try {
+//     const { conversation } = req.body;
+//
+//     if (!conversation || typeof conversation !== 'string') {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Missing or invalid required field: conversation (must be a string)'
+//       });
+//     }
 
-    if (!conversation || typeof conversation !== 'string') {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing or invalid required field: conversation (must be a string)'
-      });
-    }
+//     // Check for meaningful conversation content
+//     const totalWords = conversation.split(/\s+/).filter(word => word.length > 0).length;
+//
+//     if (totalWords < 50) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Insufficient conversation content for listening quiz generation. Please provide a longer conversation.'
+//       });
+//     }
+//
+//     const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
+//     const systemPrompt = `You are an expert English tutor creating listening comprehension quiz questions from the provided conversation. Your goal is to help the user improve their listening skills by testing their understanding of the actual conversation content.
+//
+// CRITICAL REQUIREMENTS:
+// 1. Use ONLY real content, quotes, and details from the provided conversation
+// 2. Create questions that test genuine comprehension of what was said
+// 3. Focus on important information that would be valuable to remember
+// 4. Make questions challenging but fair - test understanding, not memory tricks
+// 5. Return ONLY valid JSON array - no extra text or formatting
+//
+// QUIZ STRUCTURE - Create exactly 5 comprehension questions:
+//
+// 1. LISTENING-COMPREHENSION: Test understanding of main conversation points
+// 2. DETAIL-RECALL: Test memory of specific facts or details mentioned
+// 3. SPEAKER-IDENTIFICATION: Test who said what using actual quotes
+// 4. CONTEXT-INFERENCE: Test understanding of implied meaning
+// 5. MAIN-IDEA: Test understanding of the conversation's central topic
+//
+// OUTPUT FORMAT - Return ONLY this JSON object:
+//
+// {
+//   "questions": [
+//     {
+//       "type": "listening-comprehension",
+//       "prompt": "Based on the conversation,",
+//       "question": "specific question about main content from conversation",
+//       "options": ["correct answer", "wrong option 1", "wrong option 2", "wrong option 3"],
+//       "correctAnswer": "correct answer"
+//     },
+//     {
+//       "type": "detail-recall",
+//       "prompt": "What specific detail was mentioned about",
+//       "question": "question about specific fact or detail from conversation",
+//       "options": ["correct detail", "wrong detail 1", "wrong detail 2", "wrong detail 3"],
+//       "correctAnswer": "correct detail"
+//     },
+//     {
+//       "type": "speaker-identification",
+//       "prompt": "Who said the following:",
+//       "question": "exact quote from the conversation",
+//       "options": ["actual speaker names from conversation"],
+//       "correctAnswer": "correct speaker name"
+//     },
+//     {
+//       "type": "context-inference",
+//       "prompt": "Based on the context,",
+//       "question": "question requiring understanding of implied meaning",
+//       "options": ["correct inference", "wrong inference 1", "wrong inference 2", "wrong inference 3"],
+//       "correctAnswer": "correct inference"
+//     },
+//     {
+//       "type": "main-idea",
+//       "prompt": "What is the main topic of this conversation?",
+//       "question": "question about the central theme or purpose",
+//       "options": ["correct main idea", "wrong idea 1", "wrong idea 2", "wrong idea 3"],
+//       "correctAnswer": "correct main idea"
+//     }
+//   ]
+// }
+//
+// QUALITY STANDARDS:
+// - Use ONLY real content from the conversation
+// - Questions should test genuine comprehension skills
+// - Options should be plausible but clearly distinguishable
+// - Focus on information that would be valuable to remember
+// - No hypothetical questions - only based on actual conversation content`;
 
-    // Check for meaningful conversation content
-    const totalWords = conversation.split(/\s+/).filter(word => word.length > 0).length;
+//     const userMessage = `Analyze this conversation and create listening comprehension questions that will help the user improve their understanding of spoken English. Focus on real content, quotes, and details from the conversation: ${conversation}`;
+//
+//     const formattedMessages = [
+//       { role: "system", content: systemPrompt },
+//       { role: "user", content: userMessage },
+//     ];
+//
+//     const groqPayload = {
+//       model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
+//       messages: formattedMessages,
+//       temperature: 0.7,
+//       max_tokens: 8192,
+//       response_format: { "type": "json_object" },
+//     };
+//
+//     const groqResponse = await fetch(groqApiUrl, {
+//       method: "POST",
+//       headers: {
+//         Authorization: `Bearer ${GROQ_API}`,
+//         "Content-Type": "application/json",
+//       },
+//       body: JSON.stringify(groqPayload),
+//     });
+//
+//     if (!groqResponse.ok) {
+//       const errorData = await groqResponse.json().catch(() => ({}));
+//       throw new Error(
+//         `Groq API error! Status: ${groqResponse.status}. Details: ${errorData.error?.message || groqResponse.statusText}`
+//       );
+//     }
+//
+//     const groqResult = await groqResponse.json();
+//     const contentString = groqResult.choices[0].message.content;
+//
+//     if (!contentString) {
+//       throw new Error("No content received from AI");
+//     }
+//
+//     // Parse and clean the JSON response
+//     let jsonString = contentString;
+//
+//     // Remove markdown code blocks if present
+//     if (jsonString.includes('```json')) {
+//       jsonString = jsonString.split('```json')[1] || jsonString;
+//     } else if (jsonString.includes('```')) {
+//       jsonString = jsonString.split('```')[1] || jsonString;
+//     }
+//
+//     // Remove any leading/trailing text
+//     const startIndex = jsonString.indexOf('{');
+//     const endIndex = jsonString.lastIndexOf('}');
+//     if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+//       throw new Error('AI returned malformed JSON - missing object structure');
+//     }
+//     jsonString = jsonString.substring(startIndex, endIndex + 1);
+//
+//     // Clean up the JSON string
+//     jsonString = jsonString
+//       .replace(/\n/g, '') // Remove newlines
+//       .replace(/\/\/.*?(?=,|]|})/g, '') // Remove comments
+//       .replace(/,(\s*[\]}])/g, '$1') // Remove trailing commas
+//       .trim();
+//
+//     let parsedData;
+//     try {
+//       parsedData = JSON.parse(jsonString);
+//     } catch (parseError) {
+//       console.error('Failed to parse AI response as JSON:', parseError, jsonString);
+//       throw new Error('AI returned malformed JSON');
+//     }
+//
+//     // Validate the quiz structure
+//     if (!parsedData || typeof parsedData !== 'object') {
+//       throw new Error('AI response is not a valid object');
+//     }
+//
+//     if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
+//       throw new Error('AI response missing questions array');
+//     }
+//
+//     if (parsedData.questions.length !== 5) {
+//       throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
+//     }
+//
+//     // Extract the questions array
+//     const questions = parsedData.questions;
+//
+//     // Log question types but don't enforce strict requirements
+//     const requiredTypes = [
+//       'listening-comprehension',
+//       'detail-recall',
+//       'speaker-identification',
+//       'context-inference',
+//       'main-idea'
+//     ];
+//     const receivedTypes = questions.map(q => q.type);
+//     const missingTypes = requiredTypes.filter(type => !receivedTypes.includes(type));
+//
+//     console.log('Received question types:', receivedTypes);
+//     if (missingTypes.length > 0) {
+//       console.warn(`Missing question types: ${missingTypes.join(', ')} - but allowing response`);
+//     }
+//
+//     // Validate basic structure of each question (more flexible)
+//     for (const question of questions) {
+//       if (!question.type) {
+//         throw new Error(`Question missing type field`);
+//       }
+//       if (!question.question) {
+//         throw new Error(`Question missing question field`);
+//       }
+//       if (!Array.isArray(question.options) || question.options.length < 2) {
+//         console.warn(`Question ${question.type} has insufficient options, but allowing it`);
+//       }
+//       if (!question.correctAnswer && !question.correctAnswers) {
+//         console.warn(`Question ${question.type} missing correctAnswer or correctAnswers, but allowing it`);
+//       }
+//     }
+//
+//     // Log validation info but don't block the response
+//     const conversationText = conversation.toLowerCase();
+//     console.log('Validating questions against conversation content...');
+//
+//     for (const question of questions) {
+//       if (question.type === 'speaker-identification') {
+//         console.log(`Speaker identification question: "${question.question}"`);
+//         // Just log, don't validate strictly
+//       }
+//       // Log other question types for debugging
+//       console.log(`${question.type} question: "${question.question}"`);
+//     }
 
-    if (totalWords < 50) {
-      return res.status(400).json({
-        success: false,
-        error: 'Insufficient conversation content for listening quiz generation. Please provide a longer conversation.'
-      });
-    }
+//     res.json({
+//       success: true,
+//       data: questions
+//     });
+//
+//   } catch (error) {
+//     console.error('Error generating listening quiz:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Failed to generate listening quiz'
+//     });
+//   }
+// });
 
-    const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
-    const systemPrompt = `You are an expert English tutor creating listening comprehension quiz questions from the provided conversation. Your goal is to help the user improve their listening skills by testing their understanding of the actual conversation content.
-
-CRITICAL REQUIREMENTS:
-1. Use ONLY real content, quotes, and details from the provided conversation
-2. Create questions that test genuine comprehension of what was said
-3. Focus on important information that would be valuable to remember
-4. Make questions challenging but fair - test understanding, not memory tricks
-5. Return ONLY valid JSON array - no extra text or formatting
-
-QUIZ STRUCTURE - Create exactly 5 comprehension questions:
-
-1. LISTENING-COMPREHENSION: Test understanding of main conversation points
-2. DETAIL-RECALL: Test memory of specific facts or details mentioned
-3. SPEAKER-IDENTIFICATION: Test who said what using actual quotes
-4. CONTEXT-INFERENCE: Test understanding of implied meaning
-5. MAIN-IDEA: Test understanding of the conversation's central topic
-
-OUTPUT FORMAT - Return ONLY this JSON object:
-
-{
-  "questions": [
-    {
-      "type": "listening-comprehension",
-      "prompt": "Based on the conversation,",
-      "question": "specific question about main content from conversation",
-      "options": ["correct answer", "wrong option 1", "wrong option 2", "wrong option 3"],
-      "correctAnswer": "correct answer"
-    },
-    {
-      "type": "detail-recall",
-      "prompt": "What specific detail was mentioned about",
-      "question": "question about specific fact or detail from conversation",
-      "options": ["correct detail", "wrong detail 1", "wrong detail 2", "wrong detail 3"],
-      "correctAnswer": "correct detail"
-    },
-    {
-      "type": "speaker-identification",
-      "prompt": "Who said the following:",
-      "question": "exact quote from the conversation",
-      "options": ["actual speaker names from conversation"],
-      "correctAnswer": "correct speaker name"
-    },
-    {
-      "type": "context-inference",
-      "prompt": "Based on the context,",
-      "question": "question requiring understanding of implied meaning",
-      "options": ["correct inference", "wrong inference 1", "wrong inference 2", "wrong inference 3"],
-      "correctAnswer": "correct inference"
-    },
-    {
-      "type": "main-idea",
-      "prompt": "What is the main topic of this conversation?",
-      "question": "question about the central theme or purpose",
-      "options": ["correct main idea", "wrong idea 1", "wrong idea 2", "wrong idea 3"],
-      "correctAnswer": "correct main idea"
-    }
-  ]
-}
-
-QUALITY STANDARDS:
-- Use ONLY real content from the conversation
-- Questions should test genuine comprehension skills
-- Options should be plausible but clearly distinguishable
-- Focus on information that would be valuable to remember
-- No hypothetical questions - only based on actual conversation content`;
-
-    const userMessage = `Analyze this conversation and create listening comprehension questions that will help the user improve their understanding of spoken English. Focus on real content, quotes, and details from the conversation: ${conversation}`;
-
-    const formattedMessages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ];
-
-    const groqPayload = {
-      model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
-      messages: formattedMessages,
-      temperature: 0.7,
-      max_tokens: 8192,
-      response_format: { "type": "json_object" },
-    };
-
-    const groqResponse = await fetch(groqApiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${GROQ_API}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(groqPayload),
-    });
-
-    if (!groqResponse.ok) {
-      const errorData = await groqResponse.json().catch(() => ({}));
-      throw new Error(
-        `Groq API error! Status: ${groqResponse.status}. Details: ${errorData.error?.message || groqResponse.statusText}`
-      );
-    }
-
-    const groqResult = await groqResponse.json();
-    const contentString = groqResult.choices[0].message.content;
-
-    if (!contentString) {
-      throw new Error("No content received from AI");
-    }
-
-    // Parse and clean the JSON response
-    let jsonString = contentString;
-
-    // Remove markdown code blocks if present
-    if (jsonString.includes('```json')) {
-      jsonString = jsonString.split('```json')[1] || jsonString;
-    } else if (jsonString.includes('```')) {
-      jsonString = jsonString.split('```')[1] || jsonString;
-    }
-
-    // Remove any leading/trailing text
-    const startIndex = jsonString.indexOf('{');
-    const endIndex = jsonString.lastIndexOf('}');
-    if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-      throw new Error('AI returned malformed JSON - missing object structure');
-    }
-    jsonString = jsonString.substring(startIndex, endIndex + 1);
-
-    // Clean up the JSON string
-    jsonString = jsonString
-      .replace(/\n/g, '') // Remove newlines
-      .replace(/\/\/.*?(?=,|]|})/g, '') // Remove comments
-      .replace(/,(\s*[\]}])/g, '$1') // Remove trailing commas
-      .trim();
-
-    let parsedData;
-    try {
-      parsedData = JSON.parse(jsonString);
-    } catch (parseError) {
-      console.error('Failed to parse AI response as JSON:', parseError, jsonString);
-      throw new Error('AI returned malformed JSON');
-    }
-
-    // Validate the quiz structure
-    if (!parsedData || typeof parsedData !== 'object') {
-      throw new Error('AI response is not a valid object');
-    }
-
-    if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
-      throw new Error('AI response missing questions array');
-    }
-
-    if (parsedData.questions.length !== 5) {
-      throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
-    }
-
-    // Extract the questions array
-    const questions = parsedData.questions;
-
-    // Log question types but don't enforce strict requirements
-    const requiredTypes = [
-      'listening-comprehension',
-      'detail-recall',
-      'speaker-identification',
-      'context-inference',
-      'main-idea'
-    ];
-    const receivedTypes = questions.map(q => q.type);
-    const missingTypes = requiredTypes.filter(type => !receivedTypes.includes(type));
-
-    console.log('Received question types:', receivedTypes);
-    if (missingTypes.length > 0) {
-      console.warn(`Missing question types: ${missingTypes.join(', ')} - but allowing response`);
-    }
-
-    // Validate basic structure of each question (more flexible)
-    for (const question of questions) {
-      if (!question.type) {
-        throw new Error(`Question missing type field`);
-      }
-      if (!question.question) {
-        throw new Error(`Question missing question field`);
-      }
-      if (!Array.isArray(question.options) || question.options.length < 2) {
-        console.warn(`Question ${question.type} has insufficient options, but allowing it`);
-      }
-      if (!question.correctAnswer && !question.correctAnswers) {
-        console.warn(`Question ${question.type} missing correctAnswer or correctAnswers, but allowing it`);
-      }
-    }
-
-    // Log validation info but don't block the response
-    const conversationText = conversation.toLowerCase();
-    console.log('Validating questions against conversation content...');
-
-    for (const question of questions) {
-      if (question.type === 'speaker-identification') {
-        console.log(`Speaker identification question: "${question.question}"`);
-        // Just log, don't validate strictly
-      }
-      // Log other question types for debugging
-      console.log(`${question.type} question: "${question.question}"`);
-    }
-
-    res.json({
-      success: true,
-      data: questions
-    });
-
-  } catch (error) {
-    console.error('Error generating listening quiz:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to generate listening quiz'
-    });
-  }
-});
-
-// POST /api/ai/generate-listening-quiz - Generate listening quiz directly from database
+// GET /api/ai/generate-listening-quiz - Generate listening quiz directly from database
 // Data is guaranteed in DB via SESSION_SAVED flow before this is called
-router.post('/generate-listening-quiz', authenticateToken, async (req, res) => {
+router.get('/generate-listening-quiz', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { pool } = require('../db/index');
