@@ -442,18 +442,20 @@ QUALITY ASSURANCE:
   }
 });
 
-// POST /api/ai/generate-quiz
-router.post('/generate-quiz', authenticateToken, async (req, res) => {
-  try {
-    const { transcriptItems } = req.body;
-
-    if (!transcriptItems || !Array.isArray(transcriptItems)) {
-      console.error('Invalid transcriptItems:', transcriptItems);
-      return res.status(400).json({
-        success: false,
-        error: 'Missing or invalid required field: transcriptItems (must be an array)',
-      });
-    }
+// GET /api/ai/generate-quiz - Generate quiz directly from database
+// This endpoint fetches user conversations from the database and generates a quiz
+// POST /api/ai/generate-quiz (old version - removed, now using GET with database fetch)
+// router.post('/generate-quiz', authenticateToken, async (req, res) => {
+//   try {
+//     const { transcriptItems } = req.body;
+//
+//     if (!transcriptItems || !Array.isArray(transcriptItems)) {
+//       console.error('Invalid transcriptItems:', transcriptItems);
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Missing or invalid required field: transcriptItems (must be an array)',
+//       });
+//     }
 
     // Validate transcript content
     const userMessages = transcriptItems.filter(
@@ -739,19 +741,19 @@ JSON OUTPUT RULES:
       }
     }
 
-    console.log("parsed data: ", parsedData);
-    res.json({
-      success: true,
-      data: parsedData,
-    });
-  } catch (error) {
-    console.error('Error generating quiz:', error.message, error.stack);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to generate quiz',
-    });
-  }
-});
+//     console.log("parsed data: ", parsedData);
+//     res.json({
+//       success: true,
+//       data: parsedData,
+//     });
+//   } catch (error) {
+//     console.error('Error generating quiz:', error.message, error.stack);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Failed to generate quiz',
+//     });
+//   }
+// });
 
 // POST /api/ai/generate-listening-quiz - Proxy for generating listening comprehension quiz based on conversation
 router.post('/generate-listening-quiz', authenticateToken, async (req, res) => {
@@ -1202,8 +1204,8 @@ QUALITY STANDARDS:
   }
 });
 
-// POST /api/ai/generate-quiz - Generate quiz directly from user data
-router.post('/generate-quiz', authenticateToken, async (req, res) => {
+// GET /api/ai/generate-quiz - Generate quiz directly from database
+router.get('/generate-quiz', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { pool } = require('../db/index');
