@@ -19,7 +19,11 @@ from agent import EmotiveAgent
 from config import API_URL, GOOGLE_API_KEY, logger
 from db import check_daily_time_limit, get_remaining_time_during_call, test_postgres_connection
 from services.transcript_service import save_session_transcript
-from services.current_transcript_store import set_current_transcript, remove_current_transcript
+from services.socket_service import (
+    emit_saving_conversation,
+    emit_session_saved,
+    emit_session_save_failed,
+)
 import httpx
 
 
@@ -66,20 +70,12 @@ async def entrypoint(ctx: JobContext):
         user_id = int(participant.identity.replace("user_", ""))
         if not await check_daily_time_limit(user_id):
             logger.warning("Daily time limit exceeded for user %s", user_id)
-            payload = {
-                "type": "call_cut",
-                "callCut": True,
-                "reason": "time_limit",
-                "message": "Daily time limit reached. Please upgrade your plan for more time.",
-                "remaining": 0,
-            }
-            logger.info("Publishing call_cut (daily limit) to %s payload=%s", participant.identity, payload)
-            await ctx.room.local_participant.publish_data(
-                json.dumps(payload).encode("utf-8"),
-                topic="system_message",
-                reliable=True,
+            # Emit session save failed with time limit message
+            await emit_session_save_failed(
+                user_id=user_id,
+                call_id=getattr(ctx.room, "name", None),
+                error_message="Daily time limit reached. Please upgrade your plan for more time.",
             )
-            logger.info("Published call_cut (daily limit) to %s", participant.identity)
             return
 
     # Create LLM using Google API Key (from Google AI Studio)
@@ -116,22 +112,14 @@ async def entrypoint(ctx: JobContext):
                 # Disconnect gracefully with a message
                 async def disconnect_on_quota():
                     try:
-                        # Try to send a message via Socket.io
+                        # Emit session save failed for quota exhaustion
                         if participant.identity.startswith("user_"):
                             user_id = int(participant.identity.replace("user_", ""))
-                            try:
-                                async with httpx.AsyncClient() as client:
-                                    await client.post(
-                                        f"{API_URL}/api/agent/call-cut",
-                                        json={
-                                            "user_id": user_id,
-                                            "reason": "quota_exhausted",
-                                            "message": "Service temporarily unavailable. Please try again later.",
-                                        },
-                                        timeout=5.0,
-                                    )
-                            except Exception:
-                                pass
+                            await emit_session_save_failed(
+                                user_id=user_id,
+                                call_id=getattr(ctx.room, "name", None),
+                                error_message="Service temporarily unavailable. Please try again later.",
+                            )
                         
                         # Close the session
                         await session.aclose()
@@ -174,99 +162,76 @@ async def entrypoint(ctx: JobContext):
     # Function to save the transcript when the session ends
     session_start_time = datetime.now()
     
-    # Store user_id if available (for storing current transcript)
+    # Get user_id if available (for storing transcript in memory)
     user_id = None
     if participant.identity.startswith("user_"):
         try:
             user_id = int(participant.identity.replace("user_", ""))
         except ValueError:
             pass
-
+    
+    # Track if we've already handled the session end to avoid duplicate saves
+    session_save_handled = False
+    
     async def write_transcript():
-        # IMPORTANT: Store final transcript in memory BEFORE saving to DB
-        # This ensures it's available for immediate report generation
-        # This is a final fallback to ensure transcript is stored even if other mechanisms fail
+        """
+        Save the transcript when the session ends.
+        Emits SESSION_STATE events to frontend:
+        1. SAVING_CONVERSATION - before saving
+        2. SESSION_SAVED or SESSION_SAVE_FAILED - after save attempt
+        """
+        nonlocal session_save_handled
+        
+        # Prevent duplicate saves
+        if session_save_handled:
+            logger.info("Session save already handled, skipping duplicate")
+            return
+        session_save_handled = True
+        
+        room_name = getattr(ctx.room, "name", f"call_{user_id}") if hasattr(ctx, "room") else f"call_{user_id}"
+        
+        # Step 1: Emit SAVING_CONVERSATION state to frontend
         if user_id:
-            try:
-                # Wait for any pending transcript update tasks
-                if pending_transcript_updates:
-                    logger.info(
-                        "Shutdown: Waiting for %s pending transcript update tasks for user %s",
-                        len(pending_transcript_updates),
-                        user_id,
-                    )
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.gather(*pending_transcript_updates, return_exceptions=True),
-                            timeout=1.0
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Timeout waiting for pending transcript updates during shutdown")
-                
-                # Final attempt to store transcript
-                success = await store_transcript_safely()
-                if success:
-                    logger.info(
-                        "✅ Stored final transcript in shutdown callback for user %s",
-                        user_id,
-                    )
-                else:
-                    logger.warning(
-                        "⚠️ Failed to store transcript in shutdown callback for user %s",
-                        user_id,
-                    )
-            except Exception as e:
-                logger.error("❌ Error storing final transcript in shutdown callback: %s", e, exc_info=True)
+            logger.info("📤 Emitting SAVING_CONVERSATION for user %s", user_id)
+            await emit_saving_conversation(user_id=user_id, call_id=room_name)
+        
+        # Get transcript from session
+        try:
+            transcript_data = session.history.to_dict()
+        except Exception as e:
+            logger.error("Error getting transcript data: %s", e)
+            if user_id:
+                await emit_session_save_failed(
+                    user_id=user_id,
+                    call_id=room_name,
+                    error_message="Failed to retrieve conversation data.",
+                )
+            return
         
         # Save transcript to database
-        await save_session_transcript(
+        save_success = await save_session_transcript(
             session=session,
             ctx=ctx,
             participant=participant,
             session_type=session_type,
             session_start_time=session_start_time,
         )
-        # NOTE: Don't remove from in-memory store here - let the report API remove it
-        # after generating the report. This ensures it's available immediately after call ends.
+        
+        # Step 3: Emit SESSION_SAVED or SESSION_SAVE_FAILED based on result
+        if user_id:
+            if save_success:
+                logger.info("📤 Emitting SESSION_SAVED for user %s", user_id)
+                await emit_session_saved(user_id=user_id, call_id=room_name)
+            else:
+                logger.error("📤 Emitting SESSION_SAVE_FAILED for user %s", user_id)
+                await emit_session_save_failed(
+                    user_id=user_id,
+                    call_id=room_name,
+                    error_message="Failed to save conversation to database. Please try again.",
+                )
 
     # Add the transcript saving function as a shutdown callback
     ctx.add_shutdown_callback(write_transcript)
-    
-    # Periodically update the current transcript in the store (every 5 seconds)
-    async def update_current_transcript_periodically():
-        """Update the current transcript in the store periodically."""
-        if not user_id:
-            return
-        
-        update_interval = 5  # Update every 5 seconds as fallback (events handle real-time)
-        while True:
-            try:
-                await asyncio.sleep(update_interval)
-                
-                # Periodic fallback update using safe storage function
-                await store_transcript_safely()
-                    
-            except asyncio.CancelledError:
-                logger.debug("Current transcript update task cancelled")
-                break
-            except Exception as e:
-                logger.warning("Error in current transcript update task: %s", e)
-                await asyncio.sleep(update_interval)
-    
-    # Start the periodic update task
-    if user_id:
-        transcript_update_task = asyncio.create_task(update_current_transcript_periodically())
-        
-        # Clean up task when session ends
-        async def cleanup_transcript_update():
-            if transcript_update_task and not transcript_update_task.done():
-                transcript_update_task.cancel()
-                try:
-                    await transcript_update_task
-                except asyncio.CancelledError:
-                    pass
-        
-        ctx.add_shutdown_callback(cleanup_transcript_update)
 
     # Create the agent with custom prompts from metadata
     agent = EmotiveAgent(custom_prompt=custom_prompt, first_prompt=first_prompt)
@@ -285,82 +250,6 @@ async def entrypoint(ctx: JobContext):
             # ),
         ),
     )
-    
-    # Store initial transcript (empty at start, but sets up the store entry)
-    if user_id:
-        try:
-            transcript_data = session.history.to_dict()
-            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
-            transcript_data["room_name"] = room_name
-            await set_current_transcript(user_id, transcript_data)
-            logger.debug("Stored initial transcript for user %s", user_id)
-        except Exception as e:
-            logger.debug("Error storing initial transcript: %s", e)
-    
-    # Track pending transcript update tasks to ensure they complete
-    pending_transcript_updates = set()
-    
-    # Helper function to safely store transcript with error handling
-    async def store_transcript_safely():
-        """Safely store transcript with comprehensive error handling."""
-        if not user_id:
-            return False
-        
-        try:
-            transcript_data = session.history.to_dict()
-            room_name = getattr(ctx.room, "name", f"test_call_{user_id}")
-            transcript_data["room_name"] = room_name
-            messages = transcript_data.get("messages", transcript_data.get("items", []))
-            
-            if messages and len(messages) > 0:
-                await set_current_transcript(user_id, transcript_data)
-                logger.debug(
-                    "✅ Stored transcript for user %s (items: %s)",
-                    user_id,
-                    len(messages),
-                )
-                return True
-            else:
-                logger.debug(
-                    "⚠️ Transcript has no messages for user %s",
-                    user_id,
-                )
-                return False
-        except Exception as e:
-            logger.error("❌ Error storing transcript for user %s: %s", user_id, e, exc_info=True)
-            return False
-    
-    # Real-time transcript update handler - updates store immediately when messages are added
-    async def update_transcript_immediately():
-        """Update transcript store immediately when conversation items are added."""
-        if not user_id:
-            return
-        
-        try:
-            await store_transcript_safely()
-        except Exception as e:
-            logger.debug("Error in real-time transcript update: %s", e)
-            # Don't break the session if transcript update fails
-    
-    # Hook into conversation_item_added event for real-time transcript updates
-    if user_id:
-        @session.on("conversation_item_added")
-        def on_conversation_item_added(event):
-            """Event handler that updates transcript store immediately when messages are added."""
-            # Schedule async update and track it
-            task = asyncio.create_task(update_transcript_immediately())
-            pending_transcript_updates.add(task)
-            
-            # Remove task from set when it completes
-            def cleanup_task(t):
-                pending_transcript_updates.discard(t)
-            
-            task.add_done_callback(cleanup_task)
-            logger.debug(
-                "Conversation item added for user %s, updating transcript store (pending tasks: %s)",
-                user_id,
-                len(pending_transcript_updates),
-            )
     
     try:
         await session.say("Hi! how are you doing!")
@@ -412,27 +301,11 @@ async def entrypoint(ctx: JobContext):
                             user_id,
                         )
                         
-                        # Send call_cut event via Socket.io (Node.js backend)
-                        try:
-                            async with httpx.AsyncClient() as client:
-                                response = await client.post(
-                                    f"{API_URL}/api/agent/call-cut",
-                                    json={
-                                        "user_id": user_id,
-                                        "reason": "time_limit",
-                                        "message": "Time limit reached. Call ending...",
-                                    },
-                                    timeout=5.0,
-                                )
-                                if response.status_code == 200:
-                                    logger.info("Emitted call_cut (time limit) via Socket.io for user %s", user_id)
-                                else:
-                                    logger.warning("Failed to emit call_cut event: %s", response.text)
-                        except Exception as e:
-                            logger.warning("Could not send call_cut event via Socket.io: %s", e)
-                        
-                        # Disconnect by closing the session
+                        # Mark session as disconnected to trigger save flow
                         session_disconnected = True
+                        
+                        # Close the session - this will trigger the shutdown callback (write_transcript)
+                        # which handles the SAVING_CONVERSATION -> save -> SESSION_SAVED flow
                         try:
                             await session.aclose()
                         except Exception as e:
@@ -458,67 +331,12 @@ async def entrypoint(ctx: JobContext):
         time_check_task = asyncio.create_task(check_time_periodically())
         
         # Register participant disconnect handler to stop time check immediately
-        # AND store transcript IMMEDIATELY when participant disconnects
         @ctx.room.on("participant_disconnected")
         def on_participant_disconnect(participant_disconnected):
             nonlocal session_disconnected
             if participant_disconnected.identity == participant.identity:
                 logger.info(f"Participant {participant.identity} disconnected, stopping time check immediately")
                 session_disconnected = True
-                
-                # CRITICAL: Store transcript IMMEDIATELY when participant disconnects
-                # According to LiveKit docs: with close_on_disconnect enabled (default),
-                # incomplete agent turns are received immediately when user leaves via conversation_item_added
-                # We capture the transcript right after disconnect to ensure it's available
-                if user_id:
-                    async def store_transcript_on_disconnect():
-                        """
-                        Real-time transcript storage on disconnect.
-                        Transcript should already be stored via conversation_item_added events,
-                        but we do a final store to ensure latest state is captured.
-                        """
-                        try:
-                            # Wait for any pending transcript update tasks to complete
-                            # This ensures all real-time updates from conversation_item_added are done
-                            if pending_transcript_updates:
-                                logger.info(
-                                    "Waiting for %s pending real-time transcript updates to complete for user %s",
-                                    len(pending_transcript_updates),
-                                    user_id,
-                                )
-                                try:
-                                    await asyncio.wait_for(
-                                        asyncio.gather(*pending_transcript_updates, return_exceptions=True),
-                                        timeout=1.0  # Short timeout - should be instant
-                                    )
-                                except asyncio.TimeoutError:
-                                    logger.debug(
-                                        "Some transcript update tasks still pending for user %s (continuing anyway)",
-                                        user_id,
-                                    )
-                            
-                            # Brief wait to ensure any final conversation_item_added events have fired
-                            # (for incomplete turns flushed on disconnect per LiveKit docs)
-                            await asyncio.sleep(0.2)
-                            
-                            # Final real-time store - transcript should already be there from events
-                            # This just ensures we have the absolute latest state
-                            success = await store_transcript_safely()
-                            if success:
-                                logger.info(
-                                    "✅ Stored final transcript on participant disconnect for user %s (real-time)",
-                                    user_id,
-                                )
-                            else:
-                                logger.debug(
-                                    "Transcript storage returned False for user %s (may already be stored via events)",
-                                    user_id,
-                                )
-                        except Exception as e:
-                            logger.error("❌ Error storing transcript on disconnect for user %s: %s", user_id, e, exc_info=True)
-                    
-                    # Schedule immediately - this runs before shutdown callbacks
-                    asyncio.create_task(store_transcript_on_disconnect())
         
         # Clean up task when session ends
         async def cleanup_time_check():
@@ -538,5 +356,3 @@ if __name__ == "__main__":
     # Run the main LiveKit agent
     asyncio.run(test_postgres_connection())
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
-
-

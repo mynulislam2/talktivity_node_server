@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
-import asyncio
+import json
+from datetime import datetime, timezone
 
 import jwt
 import uvicorn
@@ -16,12 +17,6 @@ from services.report_service import (
     generate_and_save_report,
     generate_report_with_groq,
     _flatten_transcripts,
-    save_current_transcript_to_db,
-)
-from services.current_transcript_store import (
-    get_current_transcript,
-    wait_for_transcript,
-    remove_current_transcript,
 )
 
 
@@ -127,70 +122,44 @@ async def generate_report(
 ) -> GenerateReportResponse:
     """
     Generate report for test calls using Groq API.
-    Fetches previous conversations from database AND current conversation from in-memory store,
-    then generates report. After generating, saves current conversation to DB.
+    Reads conversations directly from the database (guaranteed to be saved
+    before this endpoint is called due to the SESSION_SAVED flow).
     """
     try:
         user_id = user["userId"]
         
-        # Wait for current transcript using async/await (not retries)
-        # This efficiently blocks until transcript is available using asyncio.Event
-        # Wait up to 120 seconds (2 minutes) for the conversation to complete
-        logger.info("⏳ Waiting for conversation to complete and transcript to become available for user %s (max 120 seconds)...", user_id)
-        current_transcript = await wait_for_transcript(user_id, timeout=120.0)
-        
-        if not current_transcript:
-            logger.error(
-                "❌ No transcript available for user %s after waiting 120 seconds",
-                user_id,
-            )
-            return GenerateReportResponse(
-                success=False,
-                error="Conversation data not available. Please ensure the conversation has completed.",
-            )
-        
-        messages = current_transcript.get("messages", current_transcript.get("items", []))
-        logger.info(
-            "✅ Transcript available for user %s (items: %s)",
-            user_id,
-            len(messages),
-        )
-        
         # Get database connection
         conn = await _get_connection()
         try:
-            # Fetch previous conversations from database
-            previous_conversations = await fetch_user_conversations(conn, user_id, limit=10)
+            # Fetch ALL conversations from database
+            # With the new deterministic flow, the conversation is guaranteed to be
+            # saved to the database before this endpoint is called (SESSION_SAVED event)
+            all_conversations = await fetch_user_conversations(conn, user_id, limit=1000)
             logger.info(
-                "Fetched %s previous conversations for user %s",
-                len(previous_conversations),
+                "✅ Fetched %s conversation(s) from database for user %s",
+                len(all_conversations),
                 user_id,
             )
             
-            # Combine previous conversations + current transcript
-            combined_turns = _flatten_transcripts(
-                previous_conversations,
-                current_transcript
-            )
+            if not all_conversations:
+                return GenerateReportResponse(
+                    success=False,
+                    error="No conversation data found. Please ensure the conversation has completed and saved.",
+                )
+            
+            # Flatten all conversations into turns
+            combined_turns = _flatten_transcripts(all_conversations, None)
             
             logger.info(
-                "Combined turns: previous=%s, current_items=%s, total=%s",
-                len(previous_conversations),
-                len(messages),
+                "Combined turns: database_conversations=%s, total_turns=%s",
+                len(all_conversations),
                 len(combined_turns),
             )
             
-            # If no combined turns after waiting, return error
             if not combined_turns:
-                logger.error(
-                    "❌ No combined turns available for user %s after waiting (previous=%s, current_items=%s)",
-                    user_id,
-                    len(previous_conversations),
-                    len(messages),
-                )
                 return GenerateReportResponse(
                     success=False,
-                    error="No conversation data available for analysis. Please try again after completing a conversation.",
+                    error="No conversation data available for analysis.",
                 )
             
             # Filter to user messages only (matching Node.js logic: item.role === 'user' && item.content)
@@ -209,37 +178,6 @@ async def generate_report(
                 user_id=user_id,
                 transcript_items=transcript_items,
             )
-            
-            # After generating report, save current transcript to DB (if it exists)
-            if current_transcript:
-                try:
-                    # Get room_name from current transcript or use a default
-                    room_name = current_transcript.get("room_name", f"test_call_{user_id}")
-                    success = await save_current_transcript_to_db(
-                        conn=conn,
-                        user_id=user_id,
-                        room_name=room_name,
-                        transcript_data=current_transcript,
-                    )
-                    if success:
-                        logger.info(
-                            "Saved current transcript to DB for user %s",
-                            user_id,
-                        )
-                        # Remove from in-memory store after saving
-                        await remove_current_transcript(user_id)
-                    else:
-                        logger.warning(
-                            "Failed to save current transcript to DB for user %s",
-                            user_id,
-                        )
-                except Exception as e:
-                    logger.error(
-                        "Error saving current transcript to DB for user %s: %s",
-                        user_id,
-                        e,
-                    )
-                    # Continue even if save fails - report is already generated
             
             return GenerateReportResponse(success=True, data=report)
             

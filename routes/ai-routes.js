@@ -988,83 +988,74 @@ QUALITY STANDARDS:
   }
 });
 
-// POST /api/ai/generate-listening-quiz-with-attempts - Generate listening quiz with backend attempt logic
-router.post('/generate-listening-quiz-with-attempts', authenticateToken, async (req, res) => {
+// POST /api/ai/generate-listening-quiz - Generate listening quiz directly from database
+// Data is guaranteed in DB via SESSION_SAVED flow before this is called
+router.post('/generate-listening-quiz', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const maxAttempts = 1;
-    const attemptInterval = 1000; // 1 second between attempts
-    let attempts = 0;
-    let success = false;
-    let result = null;
+    const { pool } = require('../db/index');
 
-    const attemptGeneration = async () => {
-      try {
-        attempts++;
-        console.log(`Listening quiz generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
+    console.log(`Generating listening quiz for user ${userId}`);
 
-        // Get latest conversations (not just today's)
-        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
-          headers: {
-            'Authorization': req.headers.authorization
-          }
-        });
+    // Get latest conversations directly from database
+    const conversationsResult = await pool.query(`
+      SELECT id, room_name, user_id, timestamp, transcript 
+      FROM conversations 
+      WHERE user_id = $1
+      ORDER BY timestamp DESC
+      LIMIT $2
+    `, [userId, 10]);
 
-        if (!response.ok) {
-          throw new Error(`Failed to fetch conversations: ${response.status}`);
+    const conversations = conversationsResult.rows;
+
+    if (!conversations || conversations.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No conversations found. Please complete some speaking sessions first.'
+      });
+    }
+
+    // Parse transcript items and create conversation text
+    const transcriptItems = conversations
+      .map((item) => {
+        try {
+          const parsed = JSON.parse(item.transcript);
+          return parsed.items || [];
+        } catch (error) {
+          console.error("Error parsing transcript item:", error);
+          return [];
         }
+      })
+      .flat()
+      .filter((item) => item.content);
 
-        const data = await response.json();
-        const conversations = data?.data?.conversations;
+    if (!transcriptItems || transcriptItems.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No valid transcript items found. Please complete some speaking sessions first.'
+      });
+    }
 
-        if (!conversations || conversations.length === 0) {
-          console.log(`No conversations found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
+    // Create conversation text from transcript items
+    const conversation = transcriptItems
+      .map((item) => `${item.role}: ${item.content}`)
+      .join('\n');
 
-        // Parse transcript items and create conversation text
-        const transcriptItems = conversations
-          .map((item) => {
-            try {
-              const parsed = JSON.parse(item.transcript);
-              return parsed.items || [];
-            } catch (error) {
-              console.error("Error parsing transcript item:", error);
-              return [];
-            }
-          })
-          .flat()
-          .filter((item) => item.content);
+    // Check for meaningful conversation content
+    const totalWords = conversation.split(/\s+/).filter(word => word.length > 0).length;
 
-        if (!transcriptItems || transcriptItems.length === 0) {
-          console.log(`No valid transcript items found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
+    if (totalWords < 50) {
+      return res.status(400).json({
+        success: false,
+        error: 'Insufficient conversation content for listening quiz generation. Please have longer conversations first.'
+      });
+    }
 
-        // Create conversation text from transcript items
-        const conversation = transcriptItems
-          .map((item) => `${item.role}: ${item.content}`)
-          .join('\n');
+    console.log(`Found ${transcriptItems.length} transcript items for user ${userId}. Generating listening quiz...`);
 
-        // Check for meaningful conversation content
-        const totalWords = conversation.split(/\s+/).filter(word => word.length > 0).length;
-
-        if (totalWords < 50) {
-          console.log(`Insufficient conversation content for listening quiz generation for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
-
-        // Always wait for the full attempt cycle before calling API
-        if (attempts < maxAttempts) {
-          console.log(`Data validation successful on attempt ${attempts}, but waiting for full attempt cycle. Will retry.`);
-          return false;
-        }
-
-        console.log(`Final attempt ${attempts} reached. Calling Groq API...`);
-
-        // Generate listening quiz using existing logic
-        const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
-        const systemPrompt = `You are an expert English tutor creating listening comprehension quiz questions from the provided conversation. Your goal is to help the user improve their listening skills by testing their understanding of the actual conversation content.
+    // Generate listening quiz using Groq API
+    const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
+    const systemPrompt = `You are an expert English tutor creating listening comprehension quiz questions from the provided conversation. Your goal is to help the user improve their listening skills by testing their understanding of the actual conversation content.
 
 CRITICAL REQUIREMENTS:
 1. Use ONLY real content, quotes, and details from the provided conversation
@@ -1130,106 +1121,80 @@ QUALITY STANDARDS:
 - Focus on information that would be valuable to remember
 - No hypothetical questions - only based on actual conversation content`;
 
-        const userMessage = `Analyze this conversation and create listening comprehension questions that will help the user improve their understanding of spoken English. Focus on real content, quotes, and details from the conversation: ${conversation}`;
+    const userMessage = `Analyze this conversation and create listening comprehension questions that will help the user improve their understanding of spoken English. Focus on real content, quotes, and details from the conversation: ${conversation}`;
 
-        const formattedMessages = [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ];
+    const formattedMessages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ];
 
-        const groqPayload = {
-          model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
-          messages: formattedMessages,
-          temperature: 0.7,
-          max_tokens: 8192,
-          response_format: { "type": "json_object" },
-        };
-
-        const groqResponse = await fetch(groqApiUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GROQ_API}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(groqPayload),
-        });
-
-        if (!groqResponse.ok) {
-          throw new Error(`Groq API error: ${groqResponse.status}`);
-        }
-
-        const groqResult = await groqResponse.json();
-        const contentString = groqResult.choices[0].message.content;
-
-        if (!contentString) {
-          throw new Error("No content received from AI");
-        }
-
-        // Parse JSON response
-        let jsonString = contentString;
-        if (jsonString.includes('```json')) {
-          jsonString = jsonString.split('```json')[1] || jsonString;
-        } else if (jsonString.includes('```')) {
-          jsonString = jsonString.split('```')[1] || jsonString;
-        }
-
-        const startIndex = jsonString.indexOf('{');
-        const endIndex = jsonString.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-          throw new Error('AI returned malformed JSON');
-        }
-        jsonString = jsonString.substring(startIndex, endIndex + 1);
-
-        const parsedData = JSON.parse(jsonString);
-
-        // Validate structure
-        if (!parsedData || typeof parsedData !== 'object') {
-          throw new Error('AI response is not a valid object');
-        }
-
-        if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
-          throw new Error('AI response missing questions array');
-        }
-
-        if (parsedData.questions.length !== 5) {
-          throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
-        }
-
-        result = parsedData.questions;
-        success = true;
-        return true;
-
-      } catch (error) {
-        console.error(`Listening quiz generation attempt ${attempts} failed:`, error);
-        return false;
-      }
+    const groqPayload = {
+      model: SUPPORTED_MODELS.listeningQuiz || SUPPORTED_MODELS.fallback,
+      messages: formattedMessages,
+      temperature: 0.7,
+      max_tokens: 8192,
+      response_format: { "type": "json_object" },
     };
 
-    // Try immediately first
-    await attemptGeneration();
+    const groqResponse = await fetch(groqApiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(groqPayload),
+    });
 
-    // If not successful, retry with intervals
-    while (!success && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, attemptInterval));
-      await attemptGeneration();
+    if (!groqResponse.ok) {
+      throw new Error(`Groq API error: ${groqResponse.status}`);
     }
 
-    if (success && result) {
-      res.json({
-        success: true,
-        data: result,
-        attempts: attempts
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: `Failed to generate listening quiz after ${attempts} attempts. Please try again later.`,
-        attempts: attempts
-      });
+    const groqResult = await groqResponse.json();
+    const contentString = groqResult.choices[0].message.content;
+
+    if (!contentString) {
+      throw new Error("No content received from AI");
     }
+
+    // Parse JSON response
+    let jsonString = contentString;
+    if (jsonString.includes('```json')) {
+      jsonString = jsonString.split('```json')[1] || jsonString;
+    } else if (jsonString.includes('```')) {
+      jsonString = jsonString.split('```')[1] || jsonString;
+    }
+
+    const startIndex = jsonString.indexOf('{');
+    const endIndex = jsonString.lastIndexOf('}');
+    if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+      throw new Error('AI returned malformed JSON');
+    }
+    jsonString = jsonString.substring(startIndex, endIndex + 1);
+
+    const parsedData = JSON.parse(jsonString);
+
+    // Validate structure
+    if (!parsedData || typeof parsedData !== 'object') {
+      throw new Error('AI response is not a valid object');
+    }
+
+    if (!parsedData.questions || !Array.isArray(parsedData.questions)) {
+      throw new Error('AI response missing questions array');
+    }
+
+    if (parsedData.questions.length !== 5) {
+      throw new Error(`Expected exactly 5 questions, got ${parsedData.questions.length}`);
+    }
+
+    console.log(`✅ Successfully generated listening quiz for user ${userId}`);
+
+    res.json({
+      success: true,
+      data: parsedData.questions
+    });
 
   } catch (error) {
-    console.error('Error in generate-listening-quiz-with-attempts:', error);
+    console.error('Error generating listening quiz:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to generate listening quiz'
@@ -1237,196 +1202,8 @@ QUALITY STANDARDS:
   }
 });
 
-// POST /api/ai/generate-report-with-attempts - Generate report with backend attempt logic
-router.post('/generate-report-with-attempts', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const maxAttempts = 8;
-    const attemptInterval = 5000; // 5 seconds between attempts
-    let attempts = 0;
-    let success = false;
-    let result = null;
-
-    const attemptGeneration = async () => {
-      try {
-        attempts++;
-        console.log(`Report generation attempt ${attempts}/${maxAttempts} for user ${userId}`);
-
-        // Get latest conversations (not just today's)
-        const response = await fetch(`https://talktivity-node-server-smvz.onrender.com/api/users/${userId}/latest-conversations?limit=10`, {
-          headers: {
-            'Authorization': req.headers.authorization
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch conversations: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const conversations = data?.data?.conversations;
-
-        if (!conversations || conversations.length === 0) {
-          console.log(`No conversations found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
-
-        // Parse transcript items
-        const transcriptItems = conversations
-          .map((item) => {
-            try {
-              const parsed = JSON.parse(item.transcript);
-              return parsed.items || [];
-            } catch (error) {
-              console.error("Error parsing transcript item:", error);
-              return [];
-            }
-          })
-          .flat()
-          .filter((item) => item.role === 'user' && item.content);
-
-        if (!transcriptItems || transcriptItems.length === 0) {
-          console.log(`No valid transcript items found for user ${userId} on attempt ${attempts}`);
-          return false;
-        }
-
-        // Always wait for the full attempt cycle before calling API
-        if (attempts < maxAttempts) {
-          console.log(`Data validation successful on attempt ${attempts}, but waiting for full attempt cycle. Will retry.`);
-          return false;
-        }
-
-        console.log(`Final attempt ${attempts} reached. Calling Groq API...`);
-
-        // Generate report using existing logic
-        const groqApiUrl = "https://api.groq.com/openai/v1/chat/completions";
-        const systemPrompt = `You are a world-class English language assessment AI specializing in comprehensive conversation analysis. Your task is to analyze the provided conversation transcript and generate a detailed, accurate report.
-
-CRITICAL ANALYSIS REQUIREMENTS:
-1. Analyze ONLY the conversation transcript provided - no external data or assumptions
-2. Provide COMPREHENSIVE analysis of ALL aspects: fluency, vocabulary, grammar, and discourse
-3. For EVERY field in the report structure, provide meaningful data or set to null if insufficient information
-4. Use ONLY the user's actual words, sentences, and speech patterns from the transcript
-5. If the transcript lacks sufficient content for analysis, clearly indicate this and set relevant fields to null
-6. Be exhaustive in grammar error detection - find EVERY error in the transcript
-7. Provide specific, actionable feedback based on actual user speech patterns
-8. Ensure all numerical values are accurate and based on transcript analysis
-9. Maintain consistency between scores, levels, and feedback across all sections
-10. DO NOT use markdown, extra text, or break JSON structure; output ONLY valid JSON. No trailing commas or syntax errors. Use plain numbers for scores/percentages/rates (e.g., "score": 75). Set fields to null if data insufficient. Never fabricate data.
-
-The structure to use is exactly as in the following example (all fields required, types must match):
-${JSON.stringify(SAMPLE_REPORT, null, 2)}
-
-CRITICAL WARNING: The sample above is ONLY for showing the required JSON structure. DO NOT use any of its data, content, words, sentences, examples, or feedback. Analyze ONLY the transcript provided. Reference the user's actual words for examples and feedback. If a field cannot be filled due to insufficient data, set it to null.`;
-
-        const userMessage = `Analyze this conversation transcript and generate a comprehensive English language assessment report. Focus on the user's actual speech patterns, vocabulary usage, grammar, and fluency: ${JSON.stringify(transcriptItems)}`;
-
-        const formattedMessages = [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ];
-
-        const groqPayload = {
-          model: SUPPORTED_MODELS.report || SUPPORTED_MODELS.fallback,
-          messages: formattedMessages,
-          temperature: 0.7,
-          max_tokens: 8192,
-          response_format: { "type": "json_object" },
-        };
-
-        const groqResponse = await fetch(groqApiUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GROQ_API}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(groqPayload),
-        });
-console.log("groqResponse:", groqResponse);
-        if (!groqResponse.ok) {
-          console.log("groqResponse.status:", groqResponse.status);
-          throw new Error(`Groq API error: ${groqResponse.status}`);
-        }
-
-        const groqResult = await groqResponse.json();
-        console.log("groqResult:", groqResult);
-        const contentString = groqResult.choices[0].message.content;
-
-        if (!contentString) {
-          throw new Error("No content received from AI");
-        }
-
-        // Parse JSON response
-        let jsonString = contentString;
-        if (jsonString.includes('```json')) {
-          jsonString = jsonString.split('```json')[1] || jsonString;
-        } else if (jsonString.includes('```')) {
-          jsonString = jsonString.split('```')[1] || jsonString;
-        }
-
-        const startIndex = jsonString.indexOf('{');
-        const endIndex = jsonString.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-          throw new Error('AI returned malformed JSON');
-        }
-        jsonString = jsonString.substring(startIndex, endIndex + 1);
-
-        result = JSON.parse(jsonString);
-        success = true;
-        return true;
-
-      } catch (error) {
-        console.error(`Report generation attempt ${attempts} failed:`, error);
-        return false;
-      }
-    };
-
-    // Try immediately first
-    await attemptGeneration();
-
-    // If not successful, retry with intervals
-    while (!success && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, attemptInterval));
-      await attemptGeneration();
-    }
-
-    if (success && result) {
-      // Mark report as completed for this user
-      try {
-        const { pool } = require('../db/index');
-        await pool.query(
-          'UPDATE users SET report_completed = true, updated_at = NOW() WHERE id = $1',
-          [userId]
-        );
-        console.log(`✅ Marked report as completed for user ${userId}`);
-      } catch (updateError) {
-        console.error(`❌ Failed to mark report as completed for user ${userId}:`, updateError);
-      }
-      
-      res.json({
-        success: true,
-        data: result,
-        attempts: attempts
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: `Failed to generate report after ${attempts} attempts. Please try again later.`,
-        attempts: attempts
-      });
-    }
-
-  } catch (error) {
-    console.error('Error in generate-report-with-attempts:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to generate report'
-    });
-  }
-});
-
-// POST /api/ai/generate-quiz-with-attempts - Generate quiz directly from user data
-router.post('/generate-quiz-with-attempts', authenticateToken, async (req, res) => {
+// POST /api/ai/generate-quiz - Generate quiz directly from user data
+router.post('/generate-quiz', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { pool } = require('../db/index');
@@ -1623,7 +1400,7 @@ QUALITY STANDARDS:
     });
 
   } catch (error) {
-    console.error('Error in generate-quiz-with-attempts:', error);
+    console.error('Error generating quiz:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to generate quiz'

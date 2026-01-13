@@ -357,31 +357,45 @@ app.use('/api/admin', adminLimiter, adminRoutes);
 app.use('/api/groups', groupLimiter, groupChatRoutes);
 app.use('/api/group-chat', groupLimiter, groupChatRoutes); // Add this line to support both /groups and /group-chat endpoints
 
-// API endpoint for Python agent to emit Socket.io call_cut events
-// IMPORTANT: This route MUST be defined before any catch-all routes (like app.use('/'))
-app.post('/api/agent/call-cut', express.json(), (req, res) => {
+// API endpoint for Python agent to emit session state events
+// States: SAVING_CONVERSATION, SESSION_SAVED, SESSION_SAVE_FAILED
+// IMPORTANT: This route MUST be defined before any catch-all routes
+app.post('/api/agent/session-state', express.json(), (req, res) => {
   try {
-    const { user_id, reason, message } = req.body;
+    const { user_id, state, call_id, message } = req.body;
     
     if (!user_id) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
     }
     
+    if (!state) {
+      return res.status(400).json({ success: false, error: 'state is required' });
+    }
+    
+    // Validate state values
+    const validStates = ['SAVING_CONVERSATION', 'SESSION_SAVED', 'SESSION_SAVE_FAILED'];
+    if (!validStates.includes(state)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid state. Must be one of: ${validStates.join(', ')}` 
+      });
+    }
+    
     const payload = {
-      type: 'call_cut',
-      callCut: true,
-      reason: reason || 'time_limit',
-      message: message || 'Time limit reached. Call ending...',
-      remaining: 0,
+      type: 'SESSION_STATE',
+      state: state,
+      callId: call_id || null,
+      message: message || null,
+      targetUserId: typeof user_id === 'string' ? parseInt(user_id, 10) : user_id,
+      timestamp: new Date().toISOString(),
     };
     
-    // Find and emit to the specific user's socket(s)
-    // Convert user_id to number for comparison (socket.userId is stored as number)
-    const userIdNum = typeof user_id === 'string' ? parseInt(user_id, 10) : user_id;
+    // Convert user_id to number for comparison
+    const userIdNum = payload.targetUserId;
     let emitted = false;
     let socketCount = 0;
     
-    console.log(`[Socket.IO] Looking for socket with userId=${userIdNum} (type: ${typeof userIdNum})`);
+    console.log(`[Socket.IO] Emitting session_state '${state}' for user ${userIdNum}`);
     
     // Try multiple approaches to find and emit to the user's socket
     // Approach 1: Direct socket matching by userId
@@ -391,9 +405,9 @@ app.post('/api/agent/call-cut', express.json(), (req, res) => {
       
       // Compare as numbers to avoid type mismatch
       if (socketUserId != null && Number(socketUserId) === Number(userIdNum)) {
-        socket.emit('call_cut', payload);
+        socket.emit('session_state', payload);
         emitted = true;
-        console.log(`[Socket.IO] ✅ Emitted call_cut event to user ${userIdNum} (socket ${socket.id})`);
+        console.log(`[Socket.IO] ✅ Emitted session_state '${state}' to user ${userIdNum} (socket ${socket.id})`);
       }
     });
     
@@ -401,30 +415,28 @@ app.post('/api/agent/call-cut', express.json(), (req, res) => {
     const userRoom = `user:${userIdNum}`;
     const roomSockets = io.sockets.adapter.rooms.get(userRoom);
     if (roomSockets && roomSockets.size > 0) {
-      io.to(userRoom).emit('call_cut', payload);
+      io.to(userRoom).emit('session_state', payload);
       emitted = true;
-      console.log(`[Socket.IO] ✅ Emitted call_cut event to room ${userRoom} (${roomSockets.size} socket(s))`);
+      console.log(`[Socket.IO] ✅ Emitted session_state '${state}' to room ${userRoom} (${roomSockets.size} socket(s))`);
     }
     
     // Approach 3: Broadcast to all and let frontend filter (fallback)
     if (!emitted) {
-      console.warn(`[Socket.IO] ⚠️ No direct socket found for user ${userIdNum}, broadcasting to all`);
-      console.warn(`[Socket.IO] Available socket userIds:`, Array.from(io.sockets.sockets.values()).map(s => ({ id: s.id, userId: s.userId })).filter(s => s.userId));
-      
-      // Broadcast with user_id in payload so frontend can filter
-      io.emit('call_cut', { ...payload, targetUserId: userIdNum });
-      emitted = true; // Mark as emitted even though it's a broadcast
-      console.log(`[Socket.IO] 📢 Broadcasted call_cut event with targetUserId=${userIdNum}`);
+      console.warn(`[Socket.IO] ⚠️ No direct socket found for user ${userIdNum}, broadcasting session_state to all`);
+      io.emit('session_state', payload);
+      emitted = true;
+      console.log(`[Socket.IO] 📢 Broadcasted session_state '${state}' with targetUserId=${userIdNum}`);
     }
     
-    console.log(`[Socket.IO] Total sockets checked: ${socketCount}, Emitted: ${emitted}`);
+    console.log(`[Socket.IO] session_state '${state}' - Total sockets checked: ${socketCount}, Emitted: ${emitted}`);
     
-    res.json({ success: true, message: 'Call cut event emitted', emitted });
+    res.json({ success: true, message: `Session state '${state}' emitted`, emitted, state });
   } catch (error) {
-    console.error('[Socket.IO] Error emitting call_cut event:', error);
-    res.status(500).json({ success: false, error: 'Failed to emit call cut event' });
+    console.error('[Socket.IO] Error emitting session_state event:', error);
+    res.status(500).json({ success: false, error: 'Failed to emit session state event' });
   }
 });
+
 app.use('/api/dms', dmRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/ai', aiRoutes);

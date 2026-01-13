@@ -1,6 +1,6 @@
 """
 Services module for the Python agent.
-Provides organized access to time limits, transcripts, socket/call cut events, and report generation.
+Provides organized access to time limits, transcripts, session state events, and report generation.
 """
 
 from .time_limit_service import (
@@ -12,7 +12,15 @@ from .transcript_service import (
     save_transcript_to_postgres,
     save_transcript_by_device_id,
 )
-from .socket_service import emit_call_cut_event
+from .socket_service import (
+    emit_session_state,
+    emit_saving_conversation,
+    emit_session_saved,
+    emit_session_save_failed,
+    SESSION_STATE_SAVING,
+    SESSION_STATE_SAVED,
+    SESSION_STATE_FAILED,
+)
 from .report_service import (
     generate_and_save_report,
     generate_report_with_groq,
@@ -29,8 +37,14 @@ __all__ = [
     "save_session_transcript",
     "save_transcript_to_postgres",
     "save_transcript_by_device_id",
-    # Socket service
-    "emit_call_cut_event",
+    # Socket/session state service
+    "emit_session_state",
+    "emit_saving_conversation",
+    "emit_session_saved",
+    "emit_session_save_failed",
+    "SESSION_STATE_SAVING",
+    "SESSION_STATE_SAVED",
+    "SESSION_STATE_FAILED",
     # Report service
     "generate_and_save_report",
     "generate_report_with_groq",

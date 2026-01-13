@@ -1,52 +1,141 @@
 """
-Socket service for emitting call cut events.
-Note: Python agent uses LiveKit's publish_data instead of Socket.io,
-which is already implemented in minimal_assistant.py.
-This module provides a helper function for consistency.
+Socket service for emitting session state events to Node.js server.
+Uses HTTP POST to Node.js which then broadcasts via Socket.IO to the frontend.
 """
 
-import json
+import httpx
 from typing import Optional
 
-from livekit import rtc
+from config import API_URL, logger
 
 
-async def emit_call_cut_event(
-    room: rtc.Room,
-    participant_identity: str,
-    reason: str,
-    message: str,
-) -> None:
+# Session state constants
+SESSION_STATE_SAVING = "SAVING_CONVERSATION"
+SESSION_STATE_SAVED = "SESSION_SAVED"
+SESSION_STATE_FAILED = "SESSION_SAVE_FAILED"
+
+
+async def emit_session_state(
+    user_id: int,
+    state: str,
+    call_id: Optional[str] = None,
+    message: Optional[str] = None,
+) -> bool:
     """
-    Emit call cut event via LiveKit's publish_data (replaces Socket.io).
-    This is the Python equivalent of Node.js socketService.emitCallCutEvent().
+    Emit session state event via Node.js server Socket.IO.
+    
+    This sends an HTTP POST to the Node.js server, which then broadcasts
+    the event to the user's connected Socket.IO client.
     
     Args:
-        room: LiveKit room instance
-        participant_identity: Participant identity string
-        reason: Reason for call cut ('time_limit', 'manual', 'error', 'quota_exhausted')
-        message: Message to display to user
+        user_id: User ID to send the event to
+        state: Session state - one of:
+            - "SAVING_CONVERSATION" - Emitted when call ends, before DB save
+            - "SESSION_SAVED" - Emitted after successful DB save
+            - "SESSION_SAVE_FAILED" - Emitted if DB save fails
+        call_id: Optional call/room identifier
+        message: Optional message to display to user
+        
+    Returns:
+        True if event was successfully sent to Node.js server, False otherwise
     """
     try:
         payload = {
-            "type": "call_cut",
-            "callCut": True,
-            "reason": reason,
+            "user_id": user_id,
+            "state": state,
+            "call_id": call_id,
             "message": message,
-            "remaining": 0,
         }
         
-        # Publish data to room (frontend listens via LiveKit data channel)
-        await room.local_participant.publish_data(
-            json.dumps(payload).encode("utf-8"),
-            topic="system_message",
-            reliable=True,
-        )
-        
-        print(f"✅ Published call_cut event to {participant_identity}: {reason}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{API_URL}/api/agent/session-state",
+                json=payload,
+                timeout=5.0,
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "✅ Emitted session state '%s' for user %s (call_id=%s)",
+                    state,
+                    user_id,
+                    call_id,
+                )
+                return True
+            else:
+                logger.warning(
+                    "⚠️ Failed to emit session state '%s' for user %s: %s",
+                    state,
+                    user_id,
+                    response.text,
+                )
+                return False
+                
     except Exception as e:
-        print(f"❌ Error publishing call_cut event to {participant_identity}: {e}")
+        logger.error(
+            "❌ Error emitting session state '%s' for user %s: %s",
+            state,
+            user_id,
+            e,
+        )
+        return False
 
 
-__all__ = ["emit_call_cut_event"]
+async def emit_saving_conversation(
+    user_id: int,
+    call_id: Optional[str] = None,
+) -> bool:
+    """
+    Emit SAVING_CONVERSATION state - call this immediately when call ends.
+    Frontend will show a loader with "Saving your conversation..." message.
+    """
+    return await emit_session_state(
+        user_id=user_id,
+        state=SESSION_STATE_SAVING,
+        call_id=call_id,
+        message="Please wait a moment, we are saving your conversation for analysis…",
+    )
 
+
+async def emit_session_saved(
+    user_id: int,
+    call_id: Optional[str] = None,
+) -> bool:
+    """
+    Emit SESSION_SAVED state - call this after successful DB save.
+    Frontend will stop the loader and navigate to completion page.
+    """
+    return await emit_session_state(
+        user_id=user_id,
+        state=SESSION_STATE_SAVED,
+        call_id=call_id,
+        message="Conversation saved successfully!",
+    )
+
+
+async def emit_session_save_failed(
+    user_id: int,
+    call_id: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> bool:
+    """
+    Emit SESSION_SAVE_FAILED state - call this if DB save fails.
+    Frontend will show an error and allow retry options.
+    """
+    return await emit_session_state(
+        user_id=user_id,
+        state=SESSION_STATE_FAILED,
+        call_id=call_id,
+        message=error_message or "Failed to save conversation. Please try again.",
+    )
+
+
+__all__ = [
+    "emit_session_state",
+    "emit_saving_conversation",
+    "emit_session_saved",
+    "emit_session_save_failed",
+    "SESSION_STATE_SAVING",
+    "SESSION_STATE_SAVED",
+    "SESSION_STATE_FAILED",
+]
