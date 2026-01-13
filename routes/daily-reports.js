@@ -51,18 +51,16 @@ router.get('/:userId/:date', authenticateToken, async (req, res) => {
     }
 });
 
-// Generate and save daily report
-router.post('/generate', authenticateToken, async (req, res) => {
+// GET /generate - Generate and save daily report (fetches data from database)
+router.get('/generate', authenticateToken, async (req, res) => {
     try {
-        const { userId, date, transcriptData } = req.body;
+        const userId = req.user.userId;
+        const { pool } = require('../db/index');
         
-        // Validate inputs
-        if (!userId || !date || !transcriptData) {
-            return res.status(400).json({
-                success: false,
-                message: 'User ID, date, and transcript data are required'
-            });
-        }
+        // Get date from query params or use today's date
+        const date = req.query.date || new Date().toISOString().split('T')[0];
+        
+        console.log(`🔄 Generating daily report for user ${userId} on ${date}`);
 
         // Check if report already exists
         const existingReport = await getDailyReport(userId, date);
@@ -80,10 +78,48 @@ router.post('/generate', authenticateToken, async (req, res) => {
             });
         }
 
+        // Fetch conversations from database for the specified date
+        const conversationsResult = await pool.query(`
+            SELECT id, room_name, user_id, timestamp, transcript 
+            FROM conversations 
+            WHERE user_id = $1 AND DATE(timestamp) = $2
+            ORDER BY timestamp ASC
+        `, [userId, date]);
+
+        const conversations = conversationsResult.rows;
+
+        if (!conversations || conversations.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'No conversations found for this date. Please complete some speaking sessions first.'
+            });
+        }
+
+        // Parse transcript items from conversations
+        const transcriptItems = conversations
+            .map((item) => {
+                try {
+                    const parsed = JSON.parse(item.transcript);
+                    return parsed.items || [];
+                } catch (error) {
+                    console.error("Error parsing transcript item:", error);
+                    return [];
+                }
+            })
+            .flat()
+            .filter((item) => item.role === 'user' && item.content);
+
+        if (!transcriptItems || transcriptItems.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'No valid transcript items found. Please complete some speaking sessions first.'
+            });
+        }
+
+        console.log(`Found ${transcriptItems.length} transcript items for user ${userId} on ${date}. Generating report...`);
+
         // Generate new report using Groq API
-        console.log(`🔄 Generating new daily report for user ${userId} on ${date}`);
-        
-        const groqResponse = await generateReportWithGroq(transcriptData);
+        const groqResponse = await generateReportWithGroq(transcriptItems);
         
         if (!groqResponse.success) {
             return res.status(500).json({
