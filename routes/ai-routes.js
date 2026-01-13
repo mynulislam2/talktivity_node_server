@@ -456,290 +456,290 @@ QUALITY ASSURANCE:
 //         error: 'Missing or invalid required field: transcriptItems (must be an array)',
 //       });
 //     }
+//
+//     // Validate transcript content
+//     const userMessages = transcriptItems.filter(
+//       (item) => item.role === 'user' && item.content
+//     );
+//     const totalUserWords = userMessages.reduce((total, message) => {
+//       const content = Array.isArray(message.content)
+//         ? message.content.join(' ')
+//         : message.content;
+//       return total + (content.split(/\s+/).filter((word) => word.length > 0).length || 0);
+//     }, 0);
+//
+//     const meaningfulMessages = userMessages.filter((message) => {
+//       const content = Array.isArray(message.content)
+//         ? message.content.join(' ')
+//         : message.content;
+//       return content && content.trim().length > 5;
+//     });
+//
+//     if (totalUserWords < 30 || meaningfulMessages.length < 2) {
+//       console.warn(`Insufficient content: ${totalUserWords} words, ${meaningfulMessages.length} messages`);
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Insufficient conversation content for quiz generation.',
+//       });
+//     }
 
-    // Validate transcript content
-    const userMessages = transcriptItems.filter(
-      (item) => item.role === 'user' && item.content
-    );
-    const totalUserWords = userMessages.reduce((total, message) => {
-      const content = Array.isArray(message.content)
-        ? message.content.join(' ')
-        : message.content;
-      return total + (content.split(/\s+/).filter((word) => word.length > 0).length || 0);
-    }, 0);
+//     const groqApiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+//     const systemPrompt = `You are an expert English tutor creating personalized quiz questions from the user's conversation. Your goal is to help the user improve their English by identifying real learning opportunities from their actual speech.
+//
+// CRITICAL REQUIREMENTS:
+// 1. Extract ONLY real sentences and words from the provided conversation transcript
+// 2. Focus on common English mistakes that learners actually make
+// 3. Create questions that teach valuable grammar, vocabulary, and pronunciation lessons
+// 4. Make explanations educational and helpful for improvement
+// 5. Return ONLY a valid JSON array with exactly 5 questions - no extra text, markdown, or formatting
+// 6. If insufficient data for a specific question type, return null for that question's fields but maintain the array structure
+// 7. Use ONLY the user's actual words, sentences, and speech patterns from the transcript
+// 8. Never fabricate data or use hypothetical examples
+//
+// QUIZ STRUCTURE - Create exactly 5 educational questions:
+// 1. GRAMMAR-REPLACE: Find a sentence with a clear grammar error from the conversation
+// 2. GRAMMAR-EXPLAIN: Identify a sentence with a grammar issue and explain why it's wrong
+// 3. SYNONYM: Choose a meaningful word from the conversation that has good synonyms
+// 4. PRONUNCIATION: Pick a commonly mispronounced word from the conversation
+// 5. NATURAL-PHRASING: Find an awkward or unnatural expression from the conversation
+//
+// OUTPUT FORMAT - Return ONLY this JSON array:
+//
+// [
+//   {
+//     "type": "grammar-replace",
+//     "prompt": "Correct this sentence:",
+//     "sentence": "exact sentence with grammar error from conversation",
+//     "options": ["corrected version", "wrong option 1", "wrong option 2"],
+//     "correctAnswer": "corrected version",
+//     "explanation": "educational explanation of the grammar rule"
+//   },
+//   {
+//     "type": "grammar-explain",
+//     "prompt": "What's wrong here?",
+//     "sentence": "exact sentence with error from conversation",
+//     "options": ["specific grammar error", "wrong error 1", "wrong error 2"],
+//     "correctAnswer": "specific grammar error",
+//     "explanation": "why this grammar rule matters"
+//   },
+//   {
+//     "type": "synonym",
+//     "prompt": "Choose 2 synonyms for",
+//     "targetWord": "actual word from conversation",
+//     "options": ["correct synonym 1", "correct synonym 2", "wrong word 1", "wrong word 2"],
+//     "correctAnswers": ["correct synonym 1", "correct synonym 2"],
+//     "explanation": "nuance between the synonyms"
+//   },
+//   {
+//     "type": "pronunciation",
+//     "instruction": "You pronounced it as 'user-mispronunciation' — let's fix that!",
+//     "targetWord": {
+//       "text": "actual word from conversation",
+//       "phonetic": "correct phonetic spelling",
+//       "highlightColor": "#FF4C4C"
+//     },
+//     "userPronouncedAs": "",
+//     "context": "exact sentence containing the word",
+//     "score": 0,
+//     "retryEnabled": true
+//   },
+//   {
+//     "type": "natural-phrasing",
+//     "prompt": "Which sounds more natural?",
+//     "scenario": "context from conversation",
+//     "options": ["awkward version from conversation", "natural alternative"],
+//     "correctAnswer": "natural alternative",
+//     "explanation": "why the natural version is better"
+//   }
+// ]
+//
+// QUALITY STANDARDS:
+// - Use ONLY real sentences and words from the provided conversation
+// - Focus on common English learning challenges
+// - Make explanations educational and actionable
+// - Ensure questions provide genuine learning value
+// - If insufficient data for a question, set relevant fields to null but maintain array structure
+// - For grammar questions, use actual sentences with errors from the transcript
+// - For pronunciation, select a word actually used that is commonly mispronounced
+// - For synonyms, pick a word actually used with viable synonyms
+// - For natural phrasing, identify an actual awkward phrase and suggest a real improvement
+// - Ensure all questions are based on the user's actual speech patterns
+// - Validate that all required fields are present and correctly formatted
+// - Use plain strings for all fields (no markdown or special characters except in phonetic field)
+// - Ensure explanations are specific to the user's actual mistakes or usage`;
+//
+//     const userMessage = `Analyze this conversation transcript and create exactly 5 educational quiz questions to help the user improve their English. Focus on real sentences and words from their conversation that contain learning opportunities. If insufficient data for any question type, set relevant fields to null but maintain the array structure with 5 items.
+//
+// TRANSCRIPT DATA FOR ANALYSIS:
+// ${JSON.stringify(transcriptItems)}
+//
+// ANALYSIS REQUIREMENTS:
+// 1. GRAMMAR-REPLACE: Find a specific sentence with a clear grammar error; provide the corrected version and two plausible incorrect options
+// 2. GRAMMAR-EXPLAIN: Identify a sentence with a grammar issue; explain the specific error and provide two incorrect error descriptions
+// 3. SYNONYM: Select a meaningful word used in the conversation; provide two correct synonyms and two incorrect options
+// 4. PRONUNCIATION: Choose a commonly mispronounced word from the conversation; include its phonetic spelling and the sentence it appeared in
+// 5. NATURAL-PHRASING: Identify an awkward or unnatural expression; provide a natural alternative and the conversation context
+//
+// JSON OUTPUT RULES:
+// - Output ONLY a valid JSON array with exactly 5 items
+// - No markdown, extra text, or comments
+// - All strings must be properly quoted
+// - No trailing commas or syntax errors
+// - Use plain strings for all fields (except phonetic field which may include slashes)
+// - Set fields to null if insufficient data (e.g., no grammar errors found)
+// - Use actual sentences and words from the transcript for all examples
+// - Ensure explanations are educational and specific to the user's speech
+// - Maintain the exact structure shown above
+// - Validate that all required fields are present
+// - Ensure questions target real learning opportunities from the transcript
+// - Do NOT fabricate data or use hypothetical examples
+// - If transcript is too short, set relevant fields to null but return 5 items
+// - Ensure all the fields are available and all the fields have the data otherwise our UI can break{!!IMPORTANT}
+// `;
 
-    const meaningfulMessages = userMessages.filter((message) => {
-      const content = Array.isArray(message.content)
-        ? message.content.join(' ')
-        : message.content;
-      return content && content.trim().length > 5;
-    });
+//     const formattedMessages = [
+//       { role: 'system', content: systemPrompt },
+//       { role: 'user', content: userMessage },
+//     ];
+//
+//     const groqPayload = {
+//       model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
+//       messages: formattedMessages,
+//       temperature: 1,
+//       max_tokens: 8192,
+//     };
+//
+//     console.log('Sending Groq request with payload:', {
+//       model: groqPayload.model,
+//       messageCount: formattedMessages.length,
+//       max_tokens: groqPayload.max_tokens,
+//     });
 
-    if (totalUserWords < 30 || meaningfulMessages.length < 2) {
-      console.warn(`Insufficient content: ${totalUserWords} words, ${meaningfulMessages.length} messages`);
-      return res.status(400).json({
-        success: false,
-        error: 'Insufficient conversation content for quiz generation.',
-      });
-    }
-
-    const groqApiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-    const systemPrompt = `You are an expert English tutor creating personalized quiz questions from the user's conversation. Your goal is to help the user improve their English by identifying real learning opportunities from their actual speech.
-
-CRITICAL REQUIREMENTS:
-1. Extract ONLY real sentences and words from the provided conversation transcript
-2. Focus on common English mistakes that learners actually make
-3. Create questions that teach valuable grammar, vocabulary, and pronunciation lessons
-4. Make explanations educational and helpful for improvement
-5. Return ONLY a valid JSON array with exactly 5 questions - no extra text, markdown, or formatting
-6. If insufficient data for a specific question type, return null for that question's fields but maintain the array structure
-7. Use ONLY the user's actual words, sentences, and speech patterns from the transcript
-8. Never fabricate data or use hypothetical examples
-
-QUIZ STRUCTURE - Create exactly 5 educational questions:
-1. GRAMMAR-REPLACE: Find a sentence with a clear grammar error from the conversation
-2. GRAMMAR-EXPLAIN: Identify a sentence with a grammar issue and explain why it's wrong
-3. SYNONYM: Choose a meaningful word from the conversation that has good synonyms
-4. PRONUNCIATION: Pick a commonly mispronounced word from the conversation
-5. NATURAL-PHRASING: Find an awkward or unnatural expression from the conversation
-
-OUTPUT FORMAT - Return ONLY this JSON array:
-
-[
-  {
-    "type": "grammar-replace",
-    "prompt": "Correct this sentence:",
-    "sentence": "exact sentence with grammar error from conversation",
-    "options": ["corrected version", "wrong option 1", "wrong option 2"],
-    "correctAnswer": "corrected version",
-    "explanation": "educational explanation of the grammar rule"
-  },
-  {
-    "type": "grammar-explain",
-    "prompt": "What's wrong here?",
-    "sentence": "exact sentence with error from conversation",
-    "options": ["specific grammar error", "wrong error 1", "wrong error 2"],
-    "correctAnswer": "specific grammar error",
-    "explanation": "why this grammar rule matters"
-  },
-  {
-    "type": "synonym",
-    "prompt": "Choose 2 synonyms for",
-    "targetWord": "actual word from conversation",
-    "options": ["correct synonym 1", "correct synonym 2", "wrong word 1", "wrong word 2"],
-    "correctAnswers": ["correct synonym 1", "correct synonym 2"],
-    "explanation": "nuance between the synonyms"
-  },
-  {
-    "type": "pronunciation",
-    "instruction": "You pronounced it as 'user-mispronunciation' — let's fix that!",
-    "targetWord": {
-      "text": "actual word from conversation",
-      "phonetic": "correct phonetic spelling",
-      "highlightColor": "#FF4C4C"
-    },
-    "userPronouncedAs": "",
-    "context": "exact sentence containing the word",
-    "score": 0,
-    "retryEnabled": true
-  },
-  {
-    "type": "natural-phrasing",
-    "prompt": "Which sounds more natural?",
-    "scenario": "context from conversation",
-    "options": ["awkward version from conversation", "natural alternative"],
-    "correctAnswer": "natural alternative",
-    "explanation": "why the natural version is better"
-  }
-]
-
-QUALITY STANDARDS:
-- Use ONLY real sentences and words from the provided conversation
-- Focus on common English learning challenges
-- Make explanations educational and actionable
-- Ensure questions provide genuine learning value
-- If insufficient data for a question, set relevant fields to null but maintain array structure
-- For grammar questions, use actual sentences with errors from the transcript
-- For pronunciation, select a word actually used that is commonly mispronounced
-- For synonyms, pick a word actually used with viable synonyms
-- For natural phrasing, identify an actual awkward phrase and suggest a real improvement
-- Ensure all questions are based on the user's actual speech patterns
-- Validate that all required fields are present and correctly formatted
-- Use plain strings for all fields (no markdown or special characters except in phonetic field)
-- Ensure explanations are specific to the user's actual mistakes or usage`;
-
-    const userMessage = `Analyze this conversation transcript and create exactly 5 educational quiz questions to help the user improve their English. Focus on real sentences and words from their conversation that contain learning opportunities. If insufficient data for any question type, set relevant fields to null but maintain the array structure with 5 items.
-
-TRANSCRIPT DATA FOR ANALYSIS:
-${JSON.stringify(transcriptItems)}
-
-ANALYSIS REQUIREMENTS:
-1. GRAMMAR-REPLACE: Find a specific sentence with a clear grammar error; provide the corrected version and two plausible incorrect options
-2. GRAMMAR-EXPLAIN: Identify a sentence with a grammar issue; explain the specific error and provide two incorrect error descriptions
-3. SYNONYM: Select a meaningful word used in the conversation; provide two correct synonyms and two incorrect options
-4. PRONUNCIATION: Choose a commonly mispronounced word from the conversation; include its phonetic spelling and the sentence it appeared in
-5. NATURAL-PHRASING: Identify an awkward or unnatural expression; provide a natural alternative and the conversation context
-
-JSON OUTPUT RULES:
-- Output ONLY a valid JSON array with exactly 5 items
-- No markdown, extra text, or comments
-- All strings must be properly quoted
-- No trailing commas or syntax errors
-- Use plain strings for all fields (except phonetic field which may include slashes)
-- Set fields to null if insufficient data (e.g., no grammar errors found)
-- Use actual sentences and words from the transcript for all examples
-- Ensure explanations are educational and specific to the user's speech
-- Maintain the exact structure shown above
-- Validate that all required fields are present
-- Ensure questions target real learning opportunities from the transcript
-- Do NOT fabricate data or use hypothetical examples
-- If transcript is too short, set relevant fields to null but return 5 items
-- Ensure all the fields are available and all the fields have the data otherwise our UI can break{!!IMPORTANT}
-`;
-
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ];
-
-    const groqPayload = {
-      model: SUPPORTED_MODELS.quiz || SUPPORTED_MODELS.fallback,
-      messages: formattedMessages,
-      temperature: 1,
-      max_tokens: 8192,
-    };
-
-    console.log('Sending Groq request with payload:', {
-      model: groqPayload.model,
-      messageCount: formattedMessages.length,
-      max_tokens: groqPayload.max_tokens,
-    });
-
-    const groqResponse = await fetch(groqApiUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${GROQ_API}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(groqPayload),
-    });
-
-    console.log('Groq API response status:', groqResponse.status);
-
-    if (!groqResponse.ok) {
-      const errorData = await groqResponse.json().catch(() => ({}));
-      console.error('Groq API error details:', errorData);
-      throw new Error(
-        `Groq API error! Status: ${groqResponse.status}. Details: ${
-          errorData.error?.message || groqResponse.statusText
-        }`
-      );
-    }
-
-    const groqResult = await groqResult.json();
-    const contentString = groqResult.choices[0]?.message?.content;
-
-    if (!contentString) {
-      console.error('No content received from Groq:', groqResult);
-      throw new Error('No content received from AI');
-    }
-
-    console.log('Raw Groq response content:', contentString);
-
-    // Parse JSON with careful handling to preserve content
-    let jsonString = contentString;
-    
-    // Remove markdown code blocks if present
-    if (jsonString.includes('```json')) {
-      const parts = jsonString.split('```json');
-      if (parts.length > 1) {
-        jsonString = parts[1].split('```')[0];
-      }
-    } else if (jsonString.includes('```')) {
-      const parts = jsonString.split('```');
-      if (parts.length > 1) {
-        jsonString = parts[1];
-      }
-    }
-    
-    // Find JSON array boundaries
-    const startIndex = jsonString.indexOf('[');
-    const endIndex = jsonString.lastIndexOf(']');
-    if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-      console.error('Malformed JSON array:', jsonString);
-      throw new Error('AI returned malformed JSON - missing array structure');
-    }
-    jsonString = jsonString.substring(startIndex, endIndex + 1);
-    
-    // Minimal cleaning - only remove trailing commas, preserve content
-    jsonString = jsonString.replace(/,([\s]*[\]}])/g, '$1').trim();
-
-    let parsedData;
-    try {
-      parsedData = JSON.parse(jsonString);
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError.message, 'Raw:', jsonString);
-      throw new Error('AI returned malformed JSON');
-    }
-
-    // Validate array structure
-    if (!Array.isArray(parsedData) || parsedData.length !== 5) {
-      console.error('Invalid quiz structure: Expected 5 questions, got:', parsedData);
-      throw new Error('AI did not return an array with exactly 5 questions');
-    }
-
-    // Relaxed validation of question types
-    const requiredTypes = [
-      'grammar-replace',
-      'grammar-explain',
-      'synonym',
-      'pronunciation',
-      'natural-phrasing',
-    ];
-    const receivedTypes = parsedData.map((q) => q.type).filter(Boolean);
-    const missingTypes = requiredTypes.filter((type) => !receivedTypes.includes(type));
-    if (missingTypes.length > 0) {
-      console.warn('Missing question types:', missingTypes);
-    }
-
-    // Prepare transcript text for validation
-    const transcriptText = transcriptItems
-      .filter((item) => item.role === 'user' && item.content)
-      .map((item) => (Array.isArray(item.content) ? item.content.join(' ') : item.content).toLowerCase())
-      .join(' ');
-
-    // Preserve AI-generated content while validating structure - avoid aggressive nullification
-    // Following project memory: "Avoid Aggressive Post-Processing Validation and Support Explanation Fields"
-    for (const question of parsedData) {
-      // Only validate structure, preserve AI-generated educational content
-      if (question.sentence) {
-        if (!transcriptText.includes(question.sentence.toLowerCase())) {
-          console.warn(`Question sentence not in transcript: ${question.sentence}`);
-          // DO NOT nullify - preserve AI educational content
-        }
-      }
-      if (question.targetWord) {
-        const targetWordText = typeof question.targetWord === 'string'
-          ? question.targetWord
-          : question.targetWord?.text || '';
-        if (!transcriptText.includes(targetWordText.toLowerCase())) {
-          console.warn(`Target word not in transcript: ${targetWordText}`);
-          // DO NOT nullify - preserve AI educational content
-        }
-      }
-      if (question.context) {
-        if (!transcriptText.includes(question.context.toLowerCase())) {
-          console.warn(`Context not in transcript: ${question.context}`);
-          // DO NOT nullify - preserve AI educational content
-        }
-      }
-      if (question.scenario) {
-        if (!transcriptText.includes(question.scenario.toLowerCase())) {
-          console.warn(`Scenario not in transcript: ${question.scenario}`);
-          // DO NOT nullify - preserve AI educational content
-        }
-      }
-    }
+//     const groqResponse = await fetch(groqApiUrl, {
+//       method: 'POST',
+//       headers: {
+//         Authorization: `Bearer ${GROQ_API}`,
+//         'Content-Type': 'application/json',
+//       },
+//       body: JSON.stringify(groqPayload),
+//     });
+//
+//     console.log('Groq API response status:', groqResponse.status);
+//
+//     if (!groqResponse.ok) {
+//       const errorData = await groqResponse.json().catch(() => ({}));
+//       console.error('Groq API error details:', errorData);
+//       throw new Error(
+//         `Groq API error! Status: ${groqResponse.status}. Details: ${
+//           errorData.error?.message || groqResponse.statusText
+//         }`
+//       );
+//     }
+//
+//     const groqResult = await groqResult.json();
+//     const contentString = groqResult.choices[0]?.message?.content;
+//
+//     if (!contentString) {
+//       console.error('No content received from Groq:', groqResult);
+//       throw new Error('No content received from AI');
+//     }
+//
+//     console.log('Raw Groq response content:', contentString);
+//
+//     // Parse JSON with careful handling to preserve content
+//     let jsonString = contentString;
+//     
+//     // Remove markdown code blocks if present
+//     if (jsonString.includes('```json')) {
+//       const parts = jsonString.split('```json');
+//       if (parts.length > 1) {
+//         jsonString = parts[1].split('```')[0];
+//       }
+//     } else if (jsonString.includes('```')) {
+//       const parts = jsonString.split('```');
+//       if (parts.length > 1) {
+//         jsonString = parts[1];
+//       }
+//     }
+//     
+//     // Find JSON array boundaries
+//     const startIndex = jsonString.indexOf('[');
+//     const endIndex = jsonString.lastIndexOf(']');
+//     if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+//       console.error('Malformed JSON array:', jsonString);
+//       throw new Error('AI returned malformed JSON - missing array structure');
+//     }
+//     jsonString = jsonString.substring(startIndex, endIndex + 1);
+//     
+//     // Minimal cleaning - only remove trailing commas, preserve content
+//     jsonString = jsonString.replace(/,([\s]*[\]}])/g, '$1').trim();
+//
+//     let parsedData;
+//     try {
+//       parsedData = JSON.parse(jsonString);
+//     } catch (parseError) {
+//       console.error('JSON parse error:', parseError.message, 'Raw:', jsonString);
+//       throw new Error('AI returned malformed JSON');
+//     }
+//
+//     // Validate array structure
+//     if (!Array.isArray(parsedData) || parsedData.length !== 5) {
+//       console.error('Invalid quiz structure: Expected 5 questions, got:', parsedData);
+//       throw new Error('AI did not return an array with exactly 5 questions');
+//     }
+//
+//     // Relaxed validation of question types
+//     const requiredTypes = [
+//       'grammar-replace',
+//       'grammar-explain',
+//       'synonym',
+//       'pronunciation',
+//       'natural-phrasing',
+//     ];
+//     const receivedTypes = parsedData.map((q) => q.type).filter(Boolean);
+//     const missingTypes = requiredTypes.filter((type) => !receivedTypes.includes(type));
+//     if (missingTypes.length > 0) {
+//       console.warn('Missing question types:', missingTypes);
+//     }
+//
+//     // Prepare transcript text for validation
+//     const transcriptText = transcriptItems
+//       .filter((item) => item.role === 'user' && item.content)
+//       .map((item) => (Array.isArray(item.content) ? item.content.join(' ') : item.content).toLowerCase())
+//       .join(' ');
+//
+//     // Preserve AI-generated content while validating structure - avoid aggressive nullification
+//     // Following project memory: "Avoid Aggressive Post-Processing Validation and Support Explanation Fields"
+//     for (const question of parsedData) {
+//       // Only validate structure, preserve AI-generated educational content
+//       if (question.sentence) {
+//         if (!transcriptText.includes(question.sentence.toLowerCase())) {
+//           console.warn(`Question sentence not in transcript: ${question.sentence}`);
+//           // DO NOT nullify - preserve AI educational content
+//         }
+//       }
+//       if (question.targetWord) {
+//         const targetWordText = typeof question.targetWord === 'string'
+//           ? question.targetWord
+//           : question.targetWord?.text || '';
+//         if (!transcriptText.includes(targetWordText.toLowerCase())) {
+//           console.warn(`Target word not in transcript: ${targetWordText}`);
+//           // DO NOT nullify - preserve AI educational content
+//         }
+//       }
+//       if (question.context) {
+//         if (!transcriptText.includes(question.context.toLowerCase())) {
+//           console.warn(`Context not in transcript: ${question.context}`);
+//           // DO NOT nullify - preserve AI educational content
+//         }
+//       }
+//       if (question.scenario) {
+//         if (!transcriptText.includes(question.scenario.toLowerCase())) {
+//           console.warn(`Scenario not in transcript: ${question.scenario}`);
+//           // DO NOT nullify - preserve AI educational content
+//         }
+//       }
+//     }
 
 //     console.log("parsed data: ", parsedData);
 //     res.json({
