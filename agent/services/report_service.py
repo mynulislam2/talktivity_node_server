@@ -673,7 +673,7 @@ async def save_current_transcript_to_db(
             """,
             room_name,
             user_id,
-            datetime.now(),
+            datetime.utcnow(),
             json.dumps(transcript_data),
         )
         logger.info(

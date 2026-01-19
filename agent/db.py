@@ -90,7 +90,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
             else ROLEPLAY_CAP_PRO_SECONDS
         )
 
-        today = datetime.now().date()
+        today = datetime.utcnow().date()
         usage_query = """
             SELECT practice_time_seconds, roleplay_time_seconds
             FROM daily_usage 
@@ -183,7 +183,7 @@ async def get_remaining_time_during_call(
             roleplay_cap = 0
 
         # Get TODAY's usage only (per-type, not pooled)
-        today = datetime.now().date()
+        today = datetime.utcnow().date()
         usage_query = """
             SELECT practice_time_seconds, roleplay_time_seconds
             FROM daily_usage 
@@ -243,7 +243,7 @@ async def record_session_usage(user_id: int, session_type: str, duration_seconds
             await conn.close()
             return False
 
-        today = datetime.now().date()
+        today = datetime.utcnow().date()
         column = "practice_time_seconds" if session_type == "practice" else "roleplay_time_seconds"
 
         await conn.execute(
@@ -303,7 +303,7 @@ async def update_course_speaking_progress(user_id: int) -> bool:
             await conn.close()
             return False
 
-        today_date = datetime.now().date()
+        today_date = datetime.utcnow().date()
         course_start = course["course_start_date"]
         # course_start may be date or datetime
         if isinstance(course_start, datetime):
@@ -427,7 +427,7 @@ async def save_transcript_by_device_id(room_name, device_id, transcript_data):
         """,
             room_name,
             device_id,
-            datetime.now(),
+            datetime.utcnow(),
             json.dumps(transcript_data),
         )
 
@@ -553,7 +553,7 @@ async def save_transcript_to_postgres(room_name, participant_identity, transcrip
         """,
             room_name,
             user_id,
-            datetime.now(),
+            datetime.utcnow(),
             json.dumps(transcript_data),
         )
 

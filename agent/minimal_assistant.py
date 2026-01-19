@@ -164,7 +164,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Function to save the transcript when the session ends
-    session_start_time = datetime.now()
+    session_start_time = datetime.utcnow()
     
     # Get user_id if available (for storing transcript in memory)
     user_id = None
@@ -173,8 +173,8 @@ async def entrypoint(ctx: JobContext):
             user_id = int(participant.identity.replace("user_", ""))
         except ValueError:
             pass
-    
-    # Track if we've already handled the session end to avoid duplicate saves
+            
+    saving_emitted = False
     session_save_handled = False
     
     async def write_transcript():
@@ -195,9 +195,11 @@ async def entrypoint(ctx: JobContext):
         room_name = getattr(ctx.room, "name", f"call_{user_id}") if hasattr(ctx, "room") else f"call_{user_id}"
         
         # Step 1: Emit SAVING_CONVERSATION state to frontend
-        if user_id:
+        nonlocal saving_emitted
+        if user_id and not saving_emitted:
             logger.info("📤 Emitting SAVING_CONVERSATION for user %s", user_id)
             await emit_saving_conversation(user_id=user_id, call_id=room_name)
+            saving_emitted = True
         
         # Get transcript from session
         try:
@@ -308,8 +310,20 @@ async def entrypoint(ctx: JobContext):
                         # Mark session as disconnected to trigger save flow
                         session_disconnected = True
                         
+                        # Signal to frontend specifically that time is up
+                        if user_id:
+                            from services.socket_service import emit_session_state, SESSION_STATE_SAVING
+                            nonlocal saving_emitted
+                            await emit_session_state(
+                                user_id=user_id,
+                                state=SESSION_STATE_SAVING,
+                                call_id=getattr(ctx.room, "name", f"call_{user_id}"),
+                                message="Daily time limit reached for this session type. Saving your conversation…",
+                            )
+                            saving_emitted = True
+
                         # Close the session - this will trigger the shutdown callback (write_transcript)
-                        # which handles the SAVING_CONVERSATION -> save -> SESSION_SAVED flow
+                        # which handles the actual saving logic
                         try:
                             await session.aclose()
                         except Exception as e:

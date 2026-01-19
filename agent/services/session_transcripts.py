@@ -35,7 +35,7 @@ async def save_session_transcript(
         return False
 
     # Calculate session duration once
-    duration_seconds = int((datetime.now() - session_start_time).total_seconds())
+    duration_seconds = int((datetime.utcnow() - session_start_time).total_seconds())
     if duration_seconds < 0:
         duration_seconds = 0
 

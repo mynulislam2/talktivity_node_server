@@ -26,14 +26,14 @@ router.get('/users/:userId/latest-conversations', authenticateToken, async (req,
       ORDER BY timestamp DESC
       LIMIT $2 OFFSET $3
     `, [userId, limit, offset]);
-    
+
     // Count total conversations
     const countResult = await pool.query(`
       SELECT COUNT(*) as total
       FROM conversations
       WHERE user_id = $1
     `, [userId]);
-    
+
     const total = parseInt(countResult.rows[0].total);
 
     // Calculate pagination info
@@ -133,7 +133,7 @@ router.get('/conversations/user/:userId', authenticateToken, async (req, res) =>
       FROM conversations 
       WHERE user_id = $1
     `, [userId]);
-    
+
     const hasConversations = parseInt(result.rows[0].count) > 0;
 
     res.json({
@@ -169,7 +169,7 @@ router.post('/conversations', authenticateToken, async (req, res) => {
 
     const result = await client.query(`
       INSERT INTO conversations (user_id, transcript, room_name, session_duration, agent_state, timestamp)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      VALUES ($1, $2, $3, $4, $5, (NOW() AT TIME ZONE 'UTC'))
       RETURNING *
     `, [user_id, transcript, room_name || null, session_duration || null, agent_state || null]);
 
@@ -210,14 +210,18 @@ router.get('/users/:user_id/latest-conversations', authenticateToken, async (req
     let params;
 
     if (isToday) {
-      // When filtering for today, we need 3 parameters: user_id, limit, and the date condition
+      // Use UTC date range for "today" to match usage record dates
+      const todayDate = new Date().toISOString().split('T')[0];
+      const startTime = new Date(`${todayDate}T00:00:00Z`);
+      const endTime = new Date(`${todayDate}T23:59:59.999Z`);
+
       query = `
         SELECT * FROM conversations 
-        WHERE user_id = $1 AND DATE(timestamp) = CURRENT_DATE
+        WHERE user_id = $1 AND timestamp >= $3 AND timestamp <= $4
         ORDER BY timestamp DESC 
         LIMIT $2
       `;
-      params = [user_id, limit];
+      params = [user_id, limit, startTime, endTime];
     } else {
       // Original behavior - exactly the same as before
       query = `

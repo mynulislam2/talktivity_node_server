@@ -8,7 +8,7 @@ const { authenticateToken } = require('./auth-routes');
 router.get('/:userId/:date', authenticateToken, async (req, res) => {
     try {
         const { userId, date } = req.params;
-        
+
         // Validate inputs
         if (!userId || !date) {
             return res.status(400).json({
@@ -19,7 +19,7 @@ router.get('/:userId/:date', authenticateToken, async (req, res) => {
 
         // Check if report exists in database
         const existingReport = await getDailyReport(userId, date);
-        
+
         if (existingReport) {
             console.log(`📊 Returning cached daily report for user ${userId} on ${date}`);
             return res.json({
@@ -56,15 +56,15 @@ router.get('/generate', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.userId;
         const { pool } = require('../db/index');
-        
+
         // Get date from query params or use today's date
         const date = req.query.date || new Date().toISOString().split('T')[0];
-        
+
         console.log(`🔄 Generating daily report for user ${userId} on ${date}`);
 
         // Check if report already exists
         const existingReport = await getDailyReport(userId, date);
-        
+
         if (existingReport) {
             console.log(`📊 Returning existing cached report for user ${userId} on ${date}`);
             return res.json({
@@ -79,12 +79,16 @@ router.get('/generate', authenticateToken, async (req, res) => {
         }
 
         // Fetch conversations from database for the specified date
+        // Use a range to ensure we catch sessions across timezone boundaries
+        const startTime = new Date(`${date}T00:00:00Z`);
+        const endTime = new Date(`${date}T23:59:59.999Z`);
+
         const conversationsResult = await pool.query(`
             SELECT id, room_name, user_id, timestamp, transcript 
             FROM conversations 
-            WHERE user_id = $1 AND DATE(timestamp) = $2
+            WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
             ORDER BY timestamp ASC
-        `, [userId, date]);
+        `, [userId, startTime, endTime]);
 
         const conversations = conversationsResult.rows;
 
@@ -120,7 +124,7 @@ router.get('/generate', authenticateToken, async (req, res) => {
 
         // Generate new report using Groq API
         const groqResponse = await generateReportWithGroq(transcriptItems);
-        
+
         if (!groqResponse.success) {
             return res.status(500).json({
                 success: false,
@@ -131,7 +135,7 @@ router.get('/generate', authenticateToken, async (req, res) => {
 
         // Save the generated report to database
         const savedReport = await saveDailyReport(userId, date, groqResponse.data);
-        
+
         console.log(`✅ Daily report saved for user ${userId} on ${date}`);
 
         res.json({
@@ -159,7 +163,7 @@ router.get('/generate', authenticateToken, async (req, res) => {
 const generateReportWithGroq = async (transcriptData, useFallback = false) => {
     try {
         const url = "https://api.groq.com/openai/v1/chat/completions";
-        
+
         // Sample report structure for the AI to follow - EXACTLY matching the original report page
         const SAMPLE_REPORT = {
             "fluency": {
@@ -313,10 +317,10 @@ const generateReportWithGroq = async (transcriptData, useFallback = false) => {
         // Default to a current Groq-supported model
         const GROQ_MODEL_REPORT = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "llama-3.1-70b-versatile";
         const GROQ_MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || "llama-3.3-70b-versatile";
-        
+
         // Use fallback model if requested (for retry scenarios)
         const modelToUse = useFallback ? GROQ_MODEL_FALLBACK : GROQ_MODEL_REPORT;
-        
+
         if (useFallback) {
             console.log(`🔄 Retrying with fallback model: ${modelToUse}`);
         }
@@ -483,7 +487,7 @@ QUALITY ASSURANCE:
         if ((!contentString || contentString.length === 0) && typeof choice?.message?.reasoning === "string") {
             const reasoningText = choice.message.reasoning;
             console.log(`📝 Using reasoning field (${reasoningText.length} chars). Attempting to extract JSON...`);
-            
+
             // Try to find JSON in the reasoning text
             // Look for JSON object starting with {
             const jsonMatch = reasoningText.match(/\{[\s\S]*\}/);
@@ -524,7 +528,7 @@ QUALITY ASSURANCE:
                 aiResponse?.data?.error?.message ||
                 aiResponse?.data?.error ||
                 null;
-            
+
             let errorMsg = "No content received from AI";
             if (finishReason === "length") {
                 errorMsg = "AI response was truncated (max_tokens reached). Consider increasing max_tokens.";
@@ -541,20 +545,20 @@ QUALITY ASSURANCE:
             } else if (finishReason) {
                 errorMsg = `No content received from AI. Finish reason: ${finishReason}`;
             }
-            
+
             console.error(`❌ Groq API Error Details:`, {
                 finishReason,
                 apiErrorMessage,
                 choice: choice ? Object.keys(choice) : 'no choice',
                 message: choice?.message ? Object.keys(choice.message) : 'no message'
             });
-            
+
             throw new Error(errorMsg);
         }
 
         // Parse the AI response to extract JSON
         let jsonString = contentString;
-        
+
         // Remove markdown code blocks if present
         if (contentString.includes('```json')) {
             jsonString = contentString.split('```json')[1]?.split('```')[0] || contentString;
@@ -600,14 +604,14 @@ QUALITY ASSURANCE:
 
         try {
             const parsedData = JSON.parse(jsonString);
-            
+
             // Validate that the AI provided meaningful data
-            const hasValidData = parsedData && typeof parsedData === 'object' && 
-                Object.values(parsedData).some(value => 
-                    value !== null && value !== undefined && 
+            const hasValidData = parsedData && typeof parsedData === 'object' &&
+                Object.values(parsedData).some(value =>
+                    value !== null && value !== undefined &&
                     (typeof value === 'object' ? Object.values(value).some(v => v !== null && v !== undefined) : true)
                 );
-            
+
             // Additional validation for meaningful analysis
             const hasMeaningfulScores = parsedData && (
                 (parsedData.fluency && parsedData.fluency.fluencyScore !== null) ||
@@ -615,34 +619,34 @@ QUALITY ASSURANCE:
                 (parsedData.grammar && parsedData.grammar.grammarScore !== null) ||
                 (parsedData.discourse && parsedData.discourse.discourseScore !== null)
             );
-            
+
             if (!hasValidData || !hasMeaningfulScores) {
                 throw new Error('insufficient conversation data');
             }
-            
+
             return { success: true, data: parsedData };
         } catch (parseError) {
             console.error('Failed to parse AI response as JSON:', parseError.message);
             console.error('JSON string length:', jsonString?.length);
             console.error('JSON string preview (first 500 chars):', jsonString?.substring(0, 500));
-            
+
             // If using a reasoning model and it failed, suggest alternative
             if (modelToUse.includes("reasoning") || modelToUse.includes("gpt-oss")) {
                 console.error(`💡 Suggestion: The reasoning model (${modelToUse}) may not be suitable for JSON output. Consider using 'llama-3.3-70b-versatile' or 'llama-3.1-70b-versatile' instead.`);
             }
-            
+
             throw new Error(`AI analysis failed: ${parseError.message}`);
         }
 
     } catch (error) {
         console.error("Groq API Error:", error.message);
-        
+
         // If we haven't tried the fallback model yet, retry with it
         if (!useFallback && (error.message.includes('truncated') || error.message.includes('parse') || error.message.includes('JSON'))) {
             console.log(`🔄 Primary model failed, retrying with fallback model...`);
             return generateReportWithGroq(transcriptData, true);
         }
-        
+
         return { success: false, error: error.message || 'AI analysis failed' };
     }
 };
