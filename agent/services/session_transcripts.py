@@ -6,6 +6,8 @@ from db import (
     save_test_call_usage,
     save_transcript_by_device_id,
     save_transcript_to_postgres,
+    record_session_usage,
+    update_course_speaking_progress,
 )
 
 
@@ -32,13 +34,21 @@ async def save_session_transcript(
         logger.error("Error getting transcript data from session: %s", e)
         return False
 
-    # Track test call usage lifetime per user (5 minutes total across sessions)
-    if session_type == "test" and participant.identity.startswith("user_"):
+    # Calculate session duration once
+    duration_seconds = int((datetime.now() - session_start_time).total_seconds())
+    if duration_seconds < 0:
+        duration_seconds = 0
+
+    user_id: int | None = None
+    if participant.identity.startswith("user_"):
         try:
             user_id = int(participant.identity.replace("user_", ""))
-            duration_seconds = int(
-                (datetime.now() - session_start_time).total_seconds()
-            )
+        except ValueError:
+            user_id = None
+
+    # Track test call usage lifetime per user (5 minutes total across sessions)
+    if session_type == "test" and user_id:
+        try:
             await save_test_call_usage(user_id, duration_seconds)
         except Exception as e:
             logger.error("Error saving test call usage: %s", e)
@@ -49,7 +59,7 @@ async def save_session_transcript(
     try:
         room_name = getattr(ctx.room, "name", "console") if hasattr(ctx, "room") else "console"
         
-        if participant.identity.startswith("user_"):
+        if user_id is not None:
             # Save to conversations table for user_X format
             save_success = await save_transcript_to_postgres(
                 room_name=room_name,
@@ -86,5 +96,20 @@ async def save_session_transcript(
     except Exception as e:
         logger.error("Could not save transcript: %s", e)
         save_success = False
+
+    # Record usage for supported session types (call/practice/roleplay)
+    if user_id is not None and session_type in {"call", "practice", "roleplay"}:
+        try:
+            await record_session_usage(user_id, session_type, duration_seconds)
+        except Exception as e:
+            logger.error("Failed to record session usage for user %s: %s", user_id, e)
+
+    # Course speaking progress: update on session end (server-authoritative)
+    # We use today's totals in daily_usage (practice + roleplay) to determine completion.
+    if user_id is not None and session_type in {"practice", "roleplay"}:
+        try:
+            await update_course_speaking_progress(user_id)
+        except Exception as e:
+            logger.error("Failed to update course speaking progress for user %s: %s", user_id, e)
 
     return save_success

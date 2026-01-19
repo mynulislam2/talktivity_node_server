@@ -146,179 +146,8 @@ const startFreeTrial = async (userId) => {
   }
 };
 
-// POST /api/usage/start-session - Start a usage session (call/practice/roleplay)
-router.post('/start-session', authenticateToken, async (req, res) => {
-  try {
-    const { sessionType } = req.body; // 'call', 'practice', 'roleplay'
-    const userId = req.user.userId;
-    
-    if (!['call', 'practice', 'roleplay'].includes(sessionType)) {
-      return res.status(400).json({ success: false, error: 'Invalid session type' });
-    }
-    
-    const subscription = await getUserSubscription(userId);
-    if (!subscription) {
-      // Check if user can use onboarding test call (lifetime 5 minutes across sessions)
-      const client = await db.pool.connect();
-      try {
-        const result = await client.query(`
-          SELECT onboarding_test_call_used FROM users 
-          WHERE id = $1
-        `, [userId]);
-        
-        const user = result.rows[0];
-        const hasUsedOnboardingCall = user?.onboarding_test_call_used || false;
-        
-        // Compute lifetime usage
-        const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
-        const onboardingLimitSeconds = 5 * 60;
-        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - parseInt(lifetimeSeconds));
-
-        // Source of truth is lifetime seconds; only block when none remain
-        if (remainingLifetimeSeconds <= 0) {
-          return res.status(403).json({ 
-            success: false, 
-            error: 'Onboarding test call lifetime limit reached. Please subscribe for more calls.',
-            lifetimeLimitReached: true,
-            lifetimeUsedSeconds: lifetimeSeconds,
-            remainingLifetimeSeconds: 0
-          });
-        }
-        
-        // If flag is out of sync but time remains, clear it
-        if (hasUsedOnboardingCall && remainingLifetimeSeconds > 0) {
-          await client.query(
-            `UPDATE users SET onboarding_test_call_used = FALSE WHERE id = $1`,
-            [userId]
-          );
-        }
-        
-        // Don't mark as used yet - only mark when session actually ends
-        // Return session ID for onboarding call and remaining lifetime info
-        const sessionId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        return res.json({ 
-          success: true, 
-          sessionId,
-          message: 'Onboarding test call started',
-          isOnboardingCall: true,
-          lifetimeLimitSeconds: onboardingLimitSeconds,
-          lifetimeUsedSeconds: lifetimeSeconds,
-          remainingLifetimeSeconds
-        });
-        
-      } finally {
-        client.release();
-      }
-    }
-    
-    // Check if user is in free trial period
-    const isFreeTrial = subscription.is_free_trial && 
-                       subscription.free_trial_started_at && 
-                       new Date() < new Date(subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000);
-    
-  // Centralized limits
-  const { computeRemainingForSession, getDailyPoolLimitSeconds } = require('../utils/timeLimits');
-  const todayUsage = await getTodayUsage(userId);
-  const dailyLimitSeconds = getDailyPoolLimitSeconds(subscription.plan_type, isFreeTrial);
-  if (!dailyLimitSeconds)
-    return res.status(403).json({ success: false, error: 'Invalid subscription plan' });
-
-  const remainingForSession = computeRemainingForSession(
-    subscription.plan_type,
-    isFreeTrial,
-    sessionType,
-    todayUsage
-  );
-
-  if (remainingForSession <= 0) {
-    const planText = subscription.plan_type === 'Pro' && sessionType === 'practice'
-      ? 'Practice session limit reached (5 minutes).'
-      : 'Daily usage limit exceeded.';
-    return res.status(429).json({ 
-      success: false,
-      error: planText,
-      limit: dailyLimitSeconds,
-      used: (todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0),
-      remaining: 0
-    });
-  }
-    
-    // Generate session ID for tracking
-    const sessionId = `session_${userId}_${Date.now()}`;
-    
-    res.json({ 
-      success: true, 
-      sessionId,
-      dailyLimit: dailyLimitSeconds,
-      used: (todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0),
-      remaining: dailyLimitSeconds - ((todayUsage?.practice_time_seconds || 0) + (todayUsage?.roleplay_time_seconds || 0))
-    });
-    
-  } catch (error) {
-    console.error('Error starting session:', error);
-    res.status(500).json({ success: false, error: 'Failed to start session' });
-  }
-});
-
-// POST /api/usage/end-session - End a usage session and record time
-router.post('/end-session', authenticateToken, async (req, res) => {
-  try {
-    const { sessionId, sessionType, durationSeconds } = req.body;
-    const userId = req.user.userId;
-    
-    if (!sessionId || !sessionType || !durationSeconds) {
-      return res.status(400).json({ success: false, error: 'Missing required fields' });
-    }
-    
-    // Check if this is an onboarding call
-    const isOnboardingCall = sessionId.startsWith('onboarding_');
-    
-    if (isOnboardingCall) {
-      // For onboarding calls, track lifetime usage
-      const client = await db.pool.connect();
-      try {
-        // Record session duration in device_speaking_sessions
-        const now = new Date();
-        const sessionDate = now.toISOString().split('T')[0];
-        await client.query(
-          `INSERT INTO device_speaking_sessions (user_id, date, start_time, end_time, duration_seconds)
-           VALUES ($1, $2, $3, $3, $4)`,
-          [userId, sessionDate, now, durationSeconds]
-        );
-
-        const lifetimeSeconds = await getLifetimeOnboardingUsage(client, userId);
-        const onboardingLimitSeconds = 5 * 60;
-        const remainingLifetimeSeconds = Math.max(0, onboardingLimitSeconds - parseInt(lifetimeSeconds));
-
-        if (remainingLifetimeSeconds <= 0) {
-          await markOnboardingUsed(client, userId);
-        } else if (parseInt(lifetimeSeconds) >= onboardingLimitSeconds) {
-          await markOnboardingUsed(client, userId);
-        }
-
-        return res.json({ 
-          success: true, 
-          message: 'Onboarding test call ended',
-          isOnboardingCall: true,
-          lifetimeLimitReached: remainingLifetimeSeconds <= 0,
-          lifetimeUsedSeconds: lifetimeSeconds,
-          remainingLifetimeSeconds
-        });
-      } finally {
-        client.release();
-      }
-    }
-    
-    // For regular sessions, update daily usage
-    await updateDailyUsage(userId, sessionType, durationSeconds);
-    
-    res.json({ success: true, message: 'Session ended and usage recorded' });
-    
-  } catch (error) {
-    console.error('Error ending session:', error);
-    res.status(500).json({ success: false, error: 'Failed to end session' });
-  }
-});
+// NOTE: Usage start/end session APIs removed.
+// Time limits and usage recording are fully handled by the Python agent on call end.
 
 // POST /api/usage/start-free-trial - Start free trial for Basic plan
 router.post('/start-free-trial', authenticateToken, async (req, res) => {
@@ -815,6 +644,205 @@ router.get('/remaining-time', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error getting remaining time:', error);
     res.status(500).json({ success: false, error: 'Failed to get remaining time' });
+  }
+});
+
+// GET /api/usage/today-timeline - consolidated timeline status & remaining time
+router.get('/today-timeline', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
+  const today = new Date().toISOString().split('T')[0];
+
+  let client;
+  try {
+    client = await db.pool.connect();
+
+    // Subscription determines caps; no subscription => zero remaining
+    const subscription = await getUserSubscription(userId);
+    const isFreeTrial =
+      subscription &&
+      subscription.is_free_trial &&
+      subscription.free_trial_started_at &&
+      new Date() <
+        new Date(
+          subscription.free_trial_started_at.getTime() + 7 * 24 * 60 * 60 * 1000
+        );
+
+    const practiceCap = 5 * 60;
+    let roleplayCap = 0;
+    if (subscription) {
+      if (subscription.plan_type === 'Pro') {
+        roleplayCap = 55 * 60;
+      } else if (
+        subscription.plan_type === 'Basic' ||
+        subscription.plan_type === 'FreeTrial' ||
+        isFreeTrial
+      ) {
+        roleplayCap = 5 * 60;
+      }
+    }
+
+    // Usage totals
+    const todayUsage = await getTodayUsage(userId);
+    const practiceUsed = todayUsage ? todayUsage.practice_time_seconds || 0 : 0;
+    const roleplayUsed = todayUsage ? todayUsage.roleplay_time_seconds || 0 : 0;
+
+    const practiceRemaining =
+      subscription && roleplayCap >= 0 ? Math.max(0, practiceCap - practiceUsed) : 0;
+    const roleplayRemaining =
+      subscription && roleplayCap > 0
+        ? Math.max(0, roleplayCap - roleplayUsed)
+        : 0;
+
+    // Lifetime call usage: 5-minute lifetime limit for all users
+    const lifetimeResult = await client.query(
+      `SELECT COALESCE(SUM(duration_seconds), 0) AS total_seconds
+       FROM lifetime_call_usage
+       WHERE user_id = $1`,
+      [userId]
+    );
+    const lifetimeUsedSeconds = parseInt(
+      lifetimeResult.rows[0]?.total_seconds || 0,
+      10
+    );
+    const callLimitSeconds = 5 * 60;
+    const callRemainingSeconds = Math.max(
+      0,
+      callLimitSeconds - lifetimeUsedSeconds
+    );
+
+    // Progress flags for today
+    const progressResult = await client.query(
+      `SELECT roleplay_completed, quiz_completed, listening_completed, listening_quiz_completed
+       FROM daily_progress WHERE user_id = $1 AND date = $2`,
+      [userId, today]
+    );
+    const progress = progressResult.rows[0] || {};
+
+    res.json({
+      success: true,
+      data: {
+        isPracticeCompleted: practiceRemaining === 0,
+        practiceSessionTimeRemaining: practiceRemaining,
+        roleplaySessionTimeRemaining: roleplayRemaining,
+        roleplayFinished: progress.roleplay_completed || false,
+        quizCompleted: progress.quiz_completed || false,
+        listeningCompleted: progress.listening_completed || false,
+        listeningQuizCompleted: progress.listening_quiz_completed || false,
+        todaysReportCompleted: false,
+        // Call remaining time (lifetime 5 minutes)
+        callRemainingSeconds,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting today timeline:', error);
+    res
+      .status(500)
+      .json({ success: false, error: 'Failed to get today timeline' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+// POST /api/usage/today-timeline - update completion flags for today
+router.post('/today-timeline', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
+  const {
+    roleplayFinished,
+    quizCompleted,
+    listeningCompleted,
+    listeningQuizCompleted,
+  } = req.body;
+
+  if (
+    roleplayFinished === undefined &&
+    quizCompleted === undefined &&
+    listeningCompleted === undefined &&
+    listeningQuizCompleted === undefined
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'At least one flag must be provided',
+    });
+  }
+
+  let client;
+  try {
+    client = await db.pool.connect();
+
+    // Active course required to upsert daily_progress
+    const courseResult = await client.query(
+      'SELECT * FROM user_courses WHERE user_id = $1 AND is_active = true LIMIT 1',
+      [userId]
+    );
+    if (courseResult.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, error: 'No active course found' });
+    }
+    const course = courseResult.rows[0];
+
+    const courseStart = new Date(course.course_start_date);
+    const daysSinceStart = Math.floor(
+      (new Date() - courseStart) / (1000 * 60 * 60 * 24)
+    );
+    const currentWeek = Math.floor(daysSinceStart / 7) + 1;
+    const currentDay = (daysSinceStart % 7) + 1;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Check if a row exists for today
+    const existingProgress = await client.query(
+      'SELECT * FROM daily_progress WHERE user_id = $1 AND date = $2',
+      [userId, today]
+    );
+
+    if (existingProgress.rows.length === 0) {
+      await client.query(
+        `INSERT INTO daily_progress (
+            user_id, course_id, week_number, day_number, date,
+            roleplay_completed, quiz_completed, listening_completed, listening_quiz_completed
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          userId,
+          course.id,
+          currentWeek,
+          currentDay,
+          today,
+          roleplayFinished || false,
+          quizCompleted || false,
+          listeningCompleted || false,
+          listeningQuizCompleted || false,
+        ]
+      );
+    } else {
+      // Update only provided flags
+      await client.query(
+        `UPDATE daily_progress
+         SET
+           roleplay_completed = COALESCE($1, roleplay_completed),
+           quiz_completed = COALESCE($2, quiz_completed),
+           listening_completed = COALESCE($3, listening_completed),
+           listening_quiz_completed = COALESCE($4, listening_quiz_completed),
+           updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = $5 AND date = $6`,
+        [
+          roleplayFinished,
+          quizCompleted,
+          listeningCompleted,
+          listeningQuizCompleted,
+          userId,
+          today,
+        ]
+      );
+    }
+
+    res.json({ success: true, message: 'Timeline updated' });
+  } catch (error) {
+    console.error('Error updating timeline flags:', error);
+    res
+      .status(500)
+      .json({ success: false, error: 'Failed to update timeline' });
+  } finally {
+    if (client) client.release();
   }
 });
 

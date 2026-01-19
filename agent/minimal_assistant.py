@@ -43,7 +43,7 @@ async def entrypoint(ctx: JobContext):
     metadata = {}
     custom_prompt = ""
     first_prompt = ""
-    session_type = "general"
+    session_type = "call"
 
     try:
         if participant.metadata and hasattr(participant.metadata, "__str__"):
@@ -55,7 +55,7 @@ async def entrypoint(ctx: JobContext):
                 metadata = json.loads(metadata_str)
                 custom_prompt = metadata.get("prompt", "")
                 first_prompt = metadata.get("firstPrompt", "")
-                session_type = metadata.get("sessionType", "general")
+                session_type = metadata.get("sessionType", "call")
                 logger.info("Loaded metadata: %s", metadata)
             else:
                 logger.info("Using default metadata (console mode)")
@@ -65,16 +65,20 @@ async def entrypoint(ctx: JobContext):
         logger.warning("Could not parse participant metadata: %s", e)
         # Use default values if metadata parsing fails
 
-    # Enforce daily limit for non-test sessions only (server token TTL caps test to 5m)
-    if session_type != "test" and participant.identity.startswith("user_"):
+    # Normalize session type to supported values
+    if session_type not in {"call", "practice", "roleplay"}:
+        session_type = "call"
+
+    # Enforce limits in Python (call/practice/roleplay)
+    if participant.identity.startswith("user_"):
         user_id = int(participant.identity.replace("user_", ""))
-        if not await check_daily_time_limit(user_id):
-            logger.warning("Daily time limit exceeded for user %s", user_id)
+        if not await check_daily_time_limit(user_id, session_type):
+            logger.warning("Time limit exceeded for user %s (%s)", user_id, session_type)
             # Emit session save failed with time limit message
             await emit_session_save_failed(
                 user_id=user_id,
                 call_id=getattr(ctx.room, "name", None),
-                error_message="Daily time limit reached. Please upgrade your plan for more time.",
+                error_message="Time limit reached for this session type. Please upgrade your plan for more time.",
             )
             return
 

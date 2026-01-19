@@ -314,6 +314,7 @@ const initTables = async () => {
                 listening_end_time TIMESTAMP,
                 listening_duration_seconds INTEGER DEFAULT 0,
                 listening_quiz_completed BOOLEAN DEFAULT false,
+                roleplay_completed BOOLEAN DEFAULT false,
                 listening_quiz_score INTEGER,
                 listening_quiz_attempts INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -352,6 +353,21 @@ const initTables = async () => {
         await client.query(`
             CREATE INDEX IF NOT EXISTS idx_weekly_exams_user_week ON weekly_exams(user_id, week_number);
             CREATE INDEX IF NOT EXISTS idx_weekly_exams_course ON weekly_exams(course_id);
+        `);
+
+        // Lifetime call usage tracking (global 5-minute cap for all users)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS lifetime_call_usage (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                duration_seconds INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_lifetime_call_usage_user ON lifetime_call_usage(user_id);
         `);
 
         // Speaking sessions table for tracking multiple calls per day
