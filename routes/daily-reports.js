@@ -156,7 +156,7 @@ router.get('/generate', authenticateToken, async (req, res) => {
 
 
 // Helper function to generate report using Groq API
-const generateReportWithGroq = async (transcriptData) => {
+const generateReportWithGroq = async (transcriptData, useFallback = false) => {
     try {
         const url = "https://api.groq.com/openai/v1/chat/completions";
         
@@ -312,10 +312,17 @@ const generateReportWithGroq = async (transcriptData) => {
         // Use environment variable for model, with fallback to reliable Groq models
         // Default to a current Groq-supported model
         const GROQ_MODEL_REPORT = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "llama-3.1-70b-versatile";
-        const GROQ_MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || "mixtral-8x7b-32768";
+        const GROQ_MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || "llama-3.3-70b-versatile";
+        
+        // Use fallback model if requested (for retry scenarios)
+        const modelToUse = useFallback ? GROQ_MODEL_FALLBACK : GROQ_MODEL_REPORT;
+        
+        if (useFallback) {
+            console.log(`🔄 Retrying with fallback model: ${modelToUse}`);
+        }
 
         const payload = {
-            model: GROQ_MODEL_REPORT,
+            model: modelToUse,
             messages: [
                 {
                     role: "system",
@@ -437,7 +444,7 @@ QUALITY ASSURANCE:
                 }
             ],
             temperature: 1,
-            max_tokens: 8192,
+            max_tokens: 32768, // Increased significantly to handle long reasoning responses
         };
 
         const headers = {
@@ -466,9 +473,28 @@ QUALITY ASSURANCE:
         const choice = aiResponse?.data?.choices?.[0];
         let contentString = choice?.message?.content;
 
-        // If content is empty but Groq returned reasoning, fallback to reasoning text
+        // Check finish_reason - if it's "length", the response was truncated
+        const finishReason = choice?.finish_reason;
+        if (finishReason === "length") {
+            console.warn(`⚠️ Response truncated (max_tokens reached). Consider increasing max_tokens or using a different model.`);
+        }
+
+        // If content is empty but Groq returned reasoning, try to extract JSON from reasoning
         if ((!contentString || contentString.length === 0) && typeof choice?.message?.reasoning === "string") {
-            contentString = choice.message.reasoning;
+            const reasoningText = choice.message.reasoning;
+            console.log(`📝 Using reasoning field (${reasoningText.length} chars). Attempting to extract JSON...`);
+            
+            // Try to find JSON in the reasoning text
+            // Look for JSON object starting with {
+            const jsonMatch = reasoningText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                contentString = jsonMatch[0];
+                console.log(`✅ Extracted JSON from reasoning field (${contentString.length} chars)`);
+            } else {
+                // If no JSON found, use the reasoning text as-is and try to parse it
+                contentString = reasoningText;
+                console.warn(`⚠️ No JSON found in reasoning field, attempting to parse reasoning text directly`);
+            }
         }
 
         // Some Groq/OpenAI-compatible responses may return content as an array of parts
@@ -502,6 +528,10 @@ QUALITY ASSURANCE:
             let errorMsg = "No content received from AI";
             if (finishReason === "length") {
                 errorMsg = "AI response was truncated (max_tokens reached). Consider increasing max_tokens.";
+                // If truncated and using reasoning model, suggest fallback
+                if (modelToUse.includes("reasoning") || modelToUse.includes("gpt-oss")) {
+                    console.warn(`⚠️ Reasoning model response truncated. Consider using a non-reasoning model like 'llama-3.3-70b-versatile' or 'llama-3.1-70b-versatile'`);
+                }
             } else if (finishReason === "content_filter") {
                 errorMsg = "AI response was filtered by content policy.";
             } else if (finishReason === "stop") {
@@ -529,7 +559,7 @@ QUALITY ASSURANCE:
         if (contentString.includes('```json')) {
             jsonString = contentString.split('```json')[1]?.split('```')[0] || contentString;
         } else if (contentString.includes('```')) {
-            jsonString = contentString.split('```')[1] || contentString;
+            jsonString = contentString.split('```')[1]?.split('```')[0] || contentString;
         }
 
         // Remove any leading text before the JSON
@@ -538,15 +568,32 @@ QUALITY ASSURANCE:
             jsonString = jsonString.substring(jsonStartIndex);
         }
 
-        // Remove any trailing text after the JSON
-        const jsonEndIndex = jsonString.lastIndexOf('}');
-        if (jsonEndIndex > 0 && jsonEndIndex < jsonString.length - 1) {
-            jsonString = jsonString.substring(0, jsonEndIndex + 1);
+        // For truncated responses, try to find the last complete JSON object
+        // Count braces to find where the JSON might be complete
+        let braceCount = 0;
+        let lastValidIndex = -1;
+        for (let i = 0; i < jsonString.length; i++) {
+            if (jsonString[i] === '{') braceCount++;
+            if (jsonString[i] === '}') braceCount--;
+            if (braceCount === 0 && i > 0) {
+                lastValidIndex = i;
+            }
+        }
+
+        // If we found a complete JSON object, use it
+        if (lastValidIndex > 0) {
+            jsonString = jsonString.substring(0, lastValidIndex + 1);
+        } else {
+            // Otherwise, try to find the last closing brace
+            const jsonEndIndex = jsonString.lastIndexOf('}');
+            if (jsonEndIndex > 0) {
+                jsonString = jsonString.substring(0, jsonEndIndex + 1);
+            }
         }
 
         // Clean up the JSON string
         jsonString = jsonString
-            .replace(/\n/g, '') // Remove newlines
+            .replace(/\n/g, ' ') // Replace newlines with spaces (don't remove completely)
             .replace(/\/\/.*?(?=,|}|$)/g, '') // Remove comments
             .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
             .trim();
@@ -554,33 +601,48 @@ QUALITY ASSURANCE:
         try {
             const parsedData = JSON.parse(jsonString);
             
-                    // Validate that the AI provided meaningful data
-        const hasValidData = parsedData && typeof parsedData === 'object' && 
-            Object.values(parsedData).some(value => 
-                value !== null && value !== undefined && 
-                (typeof value === 'object' ? Object.values(value).some(v => v !== null && v !== undefined) : true)
+            // Validate that the AI provided meaningful data
+            const hasValidData = parsedData && typeof parsedData === 'object' && 
+                Object.values(parsedData).some(value => 
+                    value !== null && value !== undefined && 
+                    (typeof value === 'object' ? Object.values(value).some(v => v !== null && v !== undefined) : true)
+                );
+            
+            // Additional validation for meaningful analysis
+            const hasMeaningfulScores = parsedData && (
+                (parsedData.fluency && parsedData.fluency.fluencyScore !== null) ||
+                (parsedData.vocabulary && parsedData.vocabulary.vocabularyScore !== null) ||
+                (parsedData.grammar && parsedData.grammar.grammarScore !== null) ||
+                (parsedData.discourse && parsedData.discourse.discourseScore !== null)
             );
-        
-        // Additional validation for meaningful analysis
-        const hasMeaningfulScores = parsedData && (
-            (parsedData.fluency && parsedData.fluency.fluencyScore !== null) ||
-            (parsedData.vocabulary && parsedData.vocabulary.vocabularyScore !== null) ||
-            (parsedData.grammar && parsedData.grammar.grammarScore !== null) ||
-            (parsedData.discourse && parsedData.discourse.discourseScore !== null)
-        );
-        
-        if (!hasValidData || !hasMeaningfulScores) {
-            throw new Error('insufficient conversation data');
-        }
+            
+            if (!hasValidData || !hasMeaningfulScores) {
+                throw new Error('insufficient conversation data');
+            }
             
             return { success: true, data: parsedData };
         } catch (parseError) {
-            console.error('Failed to parse AI response as JSON:', parseError, jsonString);
-            throw new Error('AI analysis failed');
+            console.error('Failed to parse AI response as JSON:', parseError.message);
+            console.error('JSON string length:', jsonString?.length);
+            console.error('JSON string preview (first 500 chars):', jsonString?.substring(0, 500));
+            
+            // If using a reasoning model and it failed, suggest alternative
+            if (modelToUse.includes("reasoning") || modelToUse.includes("gpt-oss")) {
+                console.error(`💡 Suggestion: The reasoning model (${modelToUse}) may not be suitable for JSON output. Consider using 'llama-3.3-70b-versatile' or 'llama-3.1-70b-versatile' instead.`);
+            }
+            
+            throw new Error(`AI analysis failed: ${parseError.message}`);
         }
 
     } catch (error) {
-        console.error("Groq API Error:", error);
+        console.error("Groq API Error:", error.message);
+        
+        // If we haven't tried the fallback model yet, retry with it
+        if (!useFallback && (error.message.includes('truncated') || error.message.includes('parse') || error.message.includes('JSON'))) {
+            console.log(`🔄 Primary model failed, retrying with fallback model...`);
+            return generateReportWithGroq(transcriptData, true);
+        }
+        
         return { success: false, error: error.message || 'AI analysis failed' };
     }
 };

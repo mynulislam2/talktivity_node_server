@@ -37,7 +37,7 @@ PG_PASSWORD = str(
 PG_DATABASE = os.getenv("PG_DATABASE", "talktivity_postgres_sql_33av")
 
 # Groq API configuration
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL_REPORT = os.getenv("GROQ_MODEL_REPORT", "openai/gpt-oss-120b")
 GROQ_MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "meta-llama/llama-guard-4-12b")
