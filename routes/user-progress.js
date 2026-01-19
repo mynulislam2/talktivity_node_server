@@ -18,7 +18,15 @@ router.get("/progress", authenticateToken, async (req, res) => {
 
     const client = await db.pool.connect();
     try {
-      // 1. Get onboarding data
+      // 1. Get onboarding completion status
+      // Priority: explicit flag > computed from onboarding_data
+      const userOnboardingFlagQuery = `
+        SELECT onboarding_completed FROM users WHERE id = $1
+      `;
+      const userOnboardingFlagResult = await client.query(userOnboardingFlagQuery, [userId]);
+      const explicitOnboardingCompleted = userOnboardingFlagResult.rows[0]?.onboarding_completed || false;
+
+      // Get onboarding data
       const onboardingQuery = `
         SELECT * FROM onboarding_data 
         WHERE user_id = $1
@@ -34,7 +42,7 @@ router.get("/progress", authenticateToken, async (req, res) => {
         'interests', 'english_style', 'tutor_style'
       ];
 
-      const isOnboardingComplete = onboardingData && requiredFields.every(field => {
+      const computedOnboardingComplete = onboardingData && requiredFields.every(field => {
         const value = onboardingData[field];
         // For array/JSONB fields, check if they have at least one item
         if (Array.isArray(value) || (value && typeof value === 'object')) {
@@ -43,6 +51,9 @@ router.get("/progress", authenticateToken, async (req, res) => {
         // For string/number fields, check if they exist and are not null
         return value !== null && value !== undefined && value !== '';
       });
+
+      // Onboarding is completed if explicitly set OR computed from data
+      const isOnboardingComplete = explicitOnboardingCompleted || computedOnboardingComplete;
 
       // Convert onboarding data to array format for each step
       const onboardingSteps = onboardingData ? [
@@ -63,14 +74,34 @@ router.get("/progress", authenticateToken, async (req, res) => {
         { step: 15, completed: Array.isArray(onboardingData.tutor_style) && onboardingData.tutor_style.length > 0, data: { tutorStyle: onboardingData.tutor_style } }
       ] : [];
 
-      // 2. Check if user has completed any speaking session (call completed)
-      const sessionQuery = `
+      // 2. Check if user has completed any call session (call completed)
+      // Priority: explicit flag > usage data
+      const userCallFlagQuery = `
+        SELECT call_completed FROM users WHERE id = $1
+      `;
+      const userCallFlagResult = await client.query(userCallFlagQuery, [userId]);
+      const explicitCallCompleted = userCallFlagResult.rows[0]?.call_completed || false;
+      
+      // Check lifetime_call_usage (new system)
+      const callUsageQuery = `
         SELECT COUNT(*) as session_count
-        FROM device_speaking_sessions 
+        FROM lifetime_call_usage 
         WHERE user_id = $1 AND duration_seconds > 0
       `;
-      const sessionResult = await client.query(sessionQuery, [userId]);
-      const hasCompletedCall = parseInt(sessionResult.rows[0]?.session_count || 0) > 0;
+      const callUsageResult = await client.query(callUsageQuery, [userId]);
+      const hasCallUsage = parseInt(callUsageResult.rows[0]?.session_count || 0) > 0;
+      
+      // Also check conversations table as fallback (if transcript was saved)
+      const conversationsQuery = `
+        SELECT COUNT(*) as conversation_count
+        FROM conversations 
+        WHERE user_id = $1
+      `;
+      const conversationsResult = await client.query(conversationsQuery, [userId]);
+      const hasConversations = parseInt(conversationsResult.rows[0]?.conversation_count || 0) > 0;
+      
+      // Call is completed if explicitly set OR user has any call usage OR conversations
+      const hasCompletedCall = explicitCallCompleted || hasCallUsage || hasConversations;
 
       // 3. Check if user has viewed report
       const reportQuery = `
@@ -180,7 +211,7 @@ router.get("/progress", authenticateToken, async (req, res) => {
 router.post("/progress/update", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { reportCompleted } = req.body;
+    const { reportCompleted, callCompleted, onboardingCompleted } = req.body;
 
     const client = await db.pool.connect();
     try {
@@ -190,6 +221,24 @@ router.post("/progress/update", authenticateToken, async (req, res) => {
           `UPDATE users SET report_completed = $1 WHERE id = $2`,
           [reportCompleted, userId]
         );
+      }
+
+      // Handle callCompleted - store explicitly in users table
+      if (callCompleted !== undefined) {
+        await client.query(
+          `UPDATE users SET call_completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [callCompleted, userId]
+        );
+        console.log(`📊 Progress update: callCompleted=${callCompleted} for user ${userId}`);
+      }
+
+      // Handle onboardingCompleted - store explicitly in users table
+      if (onboardingCompleted !== undefined) {
+        await client.query(
+          `UPDATE users SET onboarding_completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [onboardingCompleted, userId]
+        );
+        console.log(`📊 Progress update: onboardingCompleted=${onboardingCompleted} for user ${userId}`);
       }
 
       return res.json({

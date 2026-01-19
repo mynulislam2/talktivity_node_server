@@ -668,7 +668,9 @@ const migrateUsersTable = async () => {
       ADD COLUMN IF NOT EXISTS profile_picture TEXT,
       ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'local',
       ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS report_completed BOOLEAN DEFAULT FALSE;
+      ADD COLUMN IF NOT EXISTS report_completed BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS call_completed BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
     `);
     
     // Create indices for new columns
@@ -676,6 +678,8 @@ const migrateUsersTable = async () => {
       CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
       CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
       CREATE INDEX IF NOT EXISTS idx_users_report_completed ON users(report_completed);
+      CREATE INDEX IF NOT EXISTS idx_users_call_completed ON users(call_completed);
+      CREATE INDEX IF NOT EXISTS idx_users_onboarding_completed ON users(onboarding_completed);
     `);
     
     // Make password nullable for existing table
