@@ -1,46 +1,15 @@
-from typing import Any, Dict, Optional
-import json
-from datetime import datetime, timezone
+from typing import Any, Dict
 
 import jwt
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, Header, Request
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import JWT_SECRET, logger
-import os
-from services.report_service import (
-    _get_connection,
-    fetch_user_conversations,
-    generate_and_save_report,
-    generate_report_with_groq,
-    _flatten_transcripts,
-)
 
 
-class AnalyzeSessionRequest(BaseModel):
-    user_id: int
-    session_type: str  # "test" | "practice"
-    latest_transcript: Optional[Dict[str, Any]] = None
-
-
-class AnalyzeSessionResponse(BaseModel):
-    report: Dict[str, Any]
-
-
-class GenerateReportRequest(BaseModel):
-    current_transcript: Optional[Dict[str, Any]] = None
-
-
-class GenerateReportResponse(BaseModel):
-    success: bool
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
-app = FastAPI(title="Talktivity Voice Report API")
+app = FastAPI(title="Talktivity Voice Agent API")
 
 # No CORS needed - this API is only called internally by Node.js server
 # All external requests go through Node.js which handles CORS
@@ -87,111 +56,6 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except jwt.InvalidTokenError as e:
         logger.warning("Invalid token: %s", e)
         raise HTTPException(status_code=403, detail="Invalid or expired token")
-
-
-@app.post("/analyze-session", response_model=AnalyzeSessionResponse)
-async def analyze_session(payload: AnalyzeSessionRequest) -> AnalyzeSessionResponse:
-    if payload.session_type not in {"test", "practice"}:
-        raise HTTPException(status_code=400, detail="Invalid session_type")
-
-    try:
-        report = await generate_and_save_report(
-            user_id=payload.user_id,
-            session_type=payload.session_type,
-            latest_transcript=payload.latest_transcript or {},
-        )
-        return AnalyzeSessionResponse(report=report)
-    except HTTPException:
-        raise
-    except Exception as e:  # pragma: no cover - defensive
-        logger.error("Error generating report: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to generate report")
-
-
-# Test endpoint to verify POST works
-@app.post("/test-post")
-async def test_post(request: Request):
-    """Test endpoint to verify POST requests work"""
-    logger.info(f"✅ TEST POST received! Headers: {dict(request.headers)}")
-    return {"success": True, "message": "POST request received successfully"}
-
-@app.get("/generate-report", response_model=GenerateReportResponse)
-async def generate_report(
-    request: Request,
-    user: Dict[str, Any] = Depends(verify_token),
-) -> GenerateReportResponse:
-    """
-    Generate report for test calls using Groq API.
-    Reads conversations directly from the database (guaranteed to be saved
-    before this endpoint is called due to the SESSION_SAVED flow).
-    """
-    try:
-        user_id = user["userId"]
-        
-        # Get database connection
-        conn = await _get_connection()
-        try:
-            # Fetch ALL conversations from database
-            # With the new deterministic flow, the conversation is guaranteed to be
-            # saved to the database before this endpoint is called (SESSION_SAVED event)
-            all_conversations = await fetch_user_conversations(conn, user_id, limit=1000)
-            logger.info(
-                "✅ Fetched %s conversation(s) from database for user %s",
-                len(all_conversations),
-                user_id,
-            )
-            
-            if not all_conversations:
-                return GenerateReportResponse(
-                    success=False,
-                    error="No conversation data found. Please ensure the conversation has completed and saved.",
-                )
-            
-            # Flatten all conversations into turns
-            combined_turns = _flatten_transcripts(all_conversations, None)
-            
-            logger.info(
-                "Combined turns: database_conversations=%s, total_turns=%s",
-                len(all_conversations),
-                len(combined_turns),
-            )
-            
-            if not combined_turns:
-                return GenerateReportResponse(
-                    success=False,
-                    error="No conversation data available for analysis.",
-                )
-            
-            # Filter to user messages only (matching Node.js logic: item.role === 'user' && item.content)
-            transcript_items = [
-                t for t in combined_turns if t.get("role") == "user" and t.get("content")
-            ]
-            
-            if not transcript_items:
-                return GenerateReportResponse(
-                    success=False,
-                    error="No valid transcript items found for analysis",
-                )
-            
-            # Generate report using Groq
-            report = await generate_report_with_groq(
-                user_id=user_id,
-                transcript_items=transcript_items,
-            )
-            
-            return GenerateReportResponse(success=True, data=report)
-            
-        finally:
-            await conn.close()
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error generating report: %s", e, exc_info=True)
-        return GenerateReportResponse(
-            success=False,
-            error=str(e) or "Failed to generate report",
-        )
 
 
 def run():

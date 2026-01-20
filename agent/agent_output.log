@@ -1,0 +1,12 @@
+2026-01-21 01:58:57,955 - [36mDEBUG[0m asyncio - Using proactor: IocpProactor [90m[0m
+2026-01-21 01:58:57,959 - [35mDEV [0m livekit.agents - Watching C:\Users\user\Talktivity\Agentserver\agent [90m[0m
+2026-01-21 01:58:59,510 - [36mDEBUG[0m asyncio - Using proactor: IocpProactor [90m[0m
+2026-01-21 01:58:59,517 - [32mINFO[0m livekit.agents - starting worker [90m{"version": "1.2.6", "rtc-version": "1.0.12"}[0m
+2026-01-21 01:58:59,517 - [32mINFO[0m livekit.agents - starting inference executor [90m[0m
+2026-01-21 01:58:59,533 - [32mINFO[0m livekit.agents - initializing process [90m{"pid": 20284, "inference": true}[0m
+2026-01-21 01:59:01,078 - [36mDEBUG[0m livekit.agents - initializing inference runner [90m{"runner": "lk_end_of_utterance_en", "pid": 20284, "inference": true}[0m
+None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+2026-01-21 01:59:02,294 - [36mDEBUG[0m livekit.agents - inference runner initialized [90m{"runner": "lk_end_of_utterance_en", "elapsed_time": 1.216028900000083, "pid": 20284, "inference": true}[0m
+2026-01-21 01:59:02,295 - [32mINFO[0m livekit.agents - process initialized [90m{"pid": 20284, "inference": true, "elapsed_time": 2.76}[0m
+2026-01-21 01:59:02,294 - [36mDEBUG[0m asyncio - Using proactor: IocpProactor [90m{"pid": 20284, "inference": true}[0m
+2026-01-21 01:59:02,303 - [32mINFO[0m livekit.agents - registered worker [90m{"id": "AW_Z4K9Bj8CoaoW", "url": "http://localhost:7880", "region": "", "protocol": 16}[0m

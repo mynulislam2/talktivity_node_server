@@ -1,0 +1,33 @@
+{"message": "starting worker", "level": "INFO", "name": "livekit.agents", "version": "1.2.6", "rtc-version": "1.0.12", "timestamp": "2026-01-20T20:23:57.742165+00:00"}
+{"message": "starting inference executor", "level": "INFO", "name": "livekit.agents", "timestamp": "2026-01-20T20:23:57.742165+00:00"}
+{"message": "initializing process", "level": "INFO", "name": "livekit.agents", "pid": 16272, "inference": true, "timestamp": "2026-01-20T20:23:57.765943+00:00"}
+None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+{"message": "process initialized", "level": "INFO", "name": "livekit.agents", "pid": 16272, "inference": true, "elapsed_time": 2.81, "timestamp": "2026-01-20T20:24:00.573686+00:00"}
+{"message": "worker failed", "level": "ERROR", "name": "livekit.agents", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Users\\user\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python310\\site-packages\\livekit\\agents\\cli\\_run.py\", line 79, in _worker_run\n    await worker.run()\n  File \"C:\\Users\\user\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python310\\site-packages\\livekit\\agents\\worker.py\", line 412, in run\n    await self._http_server.start()\n  File \"C:\\Users\\user\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python310\\site-packages\\livekit\\agents\\utils\\http_server.py\", line 27, in start\n    self._server = await self._loop.create_server(handler, self._host, self._port)\n  File \"C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\\lib\\asyncio\\base_events.py\", line 1519, in create_server\n    raise OSError(err.errno, 'error while attempting '\nOSError: [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8081): only one usage of each socket address (protocol/network address/port) is normally permitted", "timestamp": "2026-01-20T20:24:00.574671+00:00"}
+{"message": "draining worker", "level": "INFO", "name": "livekit.agents", "id": "unregistered", "timeout": 1800, "timestamp": "2026-01-20T20:24:00.576671+00:00"}
+{"message": "shutting down worker", "level": "INFO", "name": "livekit.agents", "id": "unregistered", "timestamp": "2026-01-20T20:24:00.576671+00:00"}
+Traceback (most recent call last):
+  File "C:\Users\user\Talktivity\Agentserver\agent\minimal_assistant.py", line 22, in <module>
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\livekit\agents\cli\cli.py", line 246, in run_app
+    cli()
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\click\core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\click\core.py", line 1082, in main
+    rv = self.invoke(ctx)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\click\core.py", line 1697, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\click\core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\click\core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\livekit\agents\cli\cli.py", line 73, in start
+    _run.run_worker(args)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\livekit\agents\cli\_run.py", line 101, in run_worker
+    loop.run_until_complete(worker.aclose())
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.10_3.10.3056.0_x64__qbz5n2kfra8p0\lib\asyncio\base_events.py", line 649, in run_until_complete
+    return future.result()
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\site-packages\livekit\agents\worker.py", line 578, in aclose
+    assert self._close_future is not None
+AssertionError
+worker process is not responding.. worker crashed?

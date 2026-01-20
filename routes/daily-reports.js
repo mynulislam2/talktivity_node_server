@@ -651,4 +651,5 @@ QUALITY ASSURANCE:
     }
 };
 
-module.exports = router; 
+module.exports = router;
+module.exports.generateReportWithGroq = generateReportWithGroq; 

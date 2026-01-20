@@ -1,55 +1,47 @@
 """
 Services module for the Python agent.
-Provides organized access to time limits, transcripts, session state events, and report generation.
+Provides organized access to time limits, transcripts, and session state events.
 """
 
-from .time_limit_service import (
-    check_daily_time_limit,
-    get_remaining_time_during_call,
-)
-from .transcript_service import (
-    save_session_transcript,
-    save_transcript_to_postgres,
-    save_transcript_by_device_id,
-)
+from .time_limit_checker import TimeLimitService
+from .transcript_saver import TranscriptService
 from .socket_service import (
     emit_session_state,
     emit_saving_conversation,
     emit_session_saved,
     emit_session_save_failed,
-    SESSION_STATE_SAVING,
-    SESSION_STATE_SAVED,
-    SESSION_STATE_FAILED,
 )
-from .report_service import (
-    generate_and_save_report,
-    generate_report_with_groq,
-    fetch_user_conversations,
-    _get_connection,
-    _flatten_transcripts,
+from .shared import (
+    TalktivityError,
+    ConfigurationError,
+    SessionError,
+    DatabaseError,
+    TimeLimitError,
+    TranscriptError,
+    AuthenticationError,
+    setup_logging,
+    get_logger,
 )
 
 __all__ = [
-    # Time limit service
-    "check_daily_time_limit",
-    "get_remaining_time_during_call",
-    # Transcript service
-    "save_session_transcript",
-    "save_transcript_to_postgres",
-    "save_transcript_by_device_id",
-    # Socket/session state service
+    # Services
+    "TimeLimitService",
+    "TranscriptService",
+    # Socket/session state
     "emit_session_state",
     "emit_saving_conversation",
     "emit_session_saved",
     "emit_session_save_failed",
-    "SESSION_STATE_SAVING",
-    "SESSION_STATE_SAVED",
-    "SESSION_STATE_FAILED",
-    # Report service
-    "generate_and_save_report",
-    "generate_report_with_groq",
-    "fetch_user_conversations",
-    "_get_connection",
-    "_flatten_transcripts",
+    # Errors
+    "TalktivityError",
+    "ConfigurationError",
+    "SessionError",
+    "DatabaseError",
+    "TimeLimitError",
+    "TranscriptError",
+    "AuthenticationError",
+    # Logging
+    "setup_logging",
+    "get_logger",
 ]
 

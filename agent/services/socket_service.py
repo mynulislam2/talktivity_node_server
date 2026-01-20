@@ -4,20 +4,18 @@ Uses HTTP POST to Node.js which then broadcasts via Socket.IO to the frontend.
 """
 
 import httpx
+import logging
 from typing import Optional
 
-from config import API_URL, logger
+from config import SESSION_STATE_SAVING, SESSION_STATE_SAVED, SESSION_STATE_FAILED
 
-
-# Session state constants
-SESSION_STATE_SAVING = "SAVING_CONVERSATION"
-SESSION_STATE_SAVED = "SESSION_SAVED"
-SESSION_STATE_FAILED = "SESSION_SAVE_FAILED"
+logger = logging.getLogger(__name__)
 
 
 async def emit_session_state(
     user_id: int,
     state: str,
+    api_url: str,
     call_id: Optional[str] = None,
     message: Optional[str] = None,
 ) -> bool:
@@ -33,6 +31,7 @@ async def emit_session_state(
             - "SAVING_CONVERSATION" - Emitted when call ends, before DB save
             - "SESSION_SAVED" - Emitted after successful DB save
             - "SESSION_SAVE_FAILED" - Emitted if DB save fails
+        api_url: Node.js API server URL
         call_id: Optional call/room identifier
         message: Optional message to display to user
         
@@ -49,7 +48,7 @@ async def emit_session_state(
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{API_URL}/api/agent/session-state",
+                f"{api_url}/api/agent/session-state",
                 json=payload,
                 timeout=5.0,
             )
@@ -83,6 +82,7 @@ async def emit_session_state(
 
 async def emit_saving_conversation(
     user_id: int,
+    api_url: str,
     call_id: Optional[str] = None,
 ) -> bool:
     """
@@ -92,6 +92,7 @@ async def emit_saving_conversation(
     return await emit_session_state(
         user_id=user_id,
         state=SESSION_STATE_SAVING,
+        api_url=api_url,
         call_id=call_id,
         message="Please wait a moment, we are saving your conversation for analysis…",
     )
@@ -99,6 +100,7 @@ async def emit_saving_conversation(
 
 async def emit_session_saved(
     user_id: int,
+    api_url: str,
     call_id: Optional[str] = None,
 ) -> bool:
     """
@@ -108,6 +110,7 @@ async def emit_session_saved(
     return await emit_session_state(
         user_id=user_id,
         state=SESSION_STATE_SAVED,
+        api_url=api_url,
         call_id=call_id,
         message="Conversation saved successfully!",
     )
@@ -115,6 +118,7 @@ async def emit_session_saved(
 
 async def emit_session_save_failed(
     user_id: int,
+    api_url: str,
     call_id: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> bool:
@@ -125,6 +129,7 @@ async def emit_session_save_failed(
     return await emit_session_state(
         user_id=user_id,
         state=SESSION_STATE_FAILED,
+        api_url=api_url,
         call_id=call_id,
         message=error_message or "Failed to save conversation. Please try again.",
     )

@@ -372,41 +372,11 @@ async def update_course_speaking_progress(user_id: int) -> bool:
         return False
 
 
-async def create_device_conversations_table(conn):
-    """Create device-based conversation table if it doesn't exist."""
-    await conn.execute(
-        """
-    CREATE TABLE IF NOT EXISTS device_conversations (
-        id SERIAL PRIMARY KEY,
-        room_name VARCHAR(255) NOT NULL,
-        device_id VARCHAR(64) NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        transcript JSONB NOT NULL
-    )
+async def fetch_user_onboarding_data(user_id: int) -> dict:
     """
-    )
-
-    await conn.execute(
-        """
-    CREATE INDEX IF NOT EXISTS idx_device_conversations_room ON device_conversations(room_name)
+    Fetch all onboarding data for a user from the database.
+    Returns dictionary with all user's profile information for building custom prompts.
     """
-    )
-
-    await conn.execute(
-        """
-    CREATE INDEX IF NOT EXISTS idx_device_conversations_timestamp ON device_conversations(timestamp)
-    """
-    )
-
-    await conn.execute(
-        """
-    CREATE INDEX IF NOT EXISTS idx_device_conversations_device_id ON device_conversations(device_id)
-    """
-    )
-
-
-async def save_transcript_by_device_id(room_name, device_id, transcript_data):
-    """Save transcript to PostgreSQL using device_id."""
     try:
         conn = await asyncpg.connect(
             host=PG_HOST,
@@ -414,33 +384,21 @@ async def save_transcript_by_device_id(room_name, device_id, transcript_data):
             user=PG_USER,
             password=PG_PASSWORD,
             database=PG_DATABASE,
+            ssl=True,
         )
-
-        # Ensure the device-based table exists
-        await create_device_conversations_table(conn)
-
-        # Insert the transcript
-        await conn.execute(
-            """
-        INSERT INTO device_conversations (room_name, device_id, timestamp, transcript)
-        VALUES ($1, $2, $3, $4)
-        """,
-            room_name,
-            device_id,
-            datetime.utcnow(),
-            json.dumps(transcript_data),
-        )
-
-        logger.info(
-            "Transcript for room %s and device %s saved to PostgreSQL",
-            room_name,
-            device_id,
-        )
+        
+        query = """
+            SELECT * FROM onboarding_data WHERE user_id = $1
+        """
+        result = await conn.fetchrow(query, user_id)
         await conn.close()
-        return True
-    except Exception as e:
-        logger.error("Error saving device transcript to PostgreSQL: %s", e)
-        return False
+        
+        if result:
+            # Convert Record to dictionary with all fields
+            return dict(result)
+        return {}
+    except Exception:
+        return {}
 
 
 async def ensure_test_call_usage_table(conn):
@@ -488,12 +446,24 @@ async def create_conversations_table(conn):
         id SERIAL PRIMARY KEY,
         room_name VARCHAR(255) NOT NULL,
         user_id INTEGER NOT NULL,
+        session_type VARCHAR(50) DEFAULT 'call',
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         transcript JSONB NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )
     """
     )
+    
+    # Add session_type column if it doesn't exist (migration)
+    try:
+        await conn.execute(
+            """
+        ALTER TABLE conversations 
+        ADD COLUMN IF NOT EXISTS session_type VARCHAR(50) DEFAULT 'call'
+        """
+        )
+    except Exception:
+        pass
 
     # Create indexes separately
     await conn.execute(
@@ -515,8 +485,8 @@ async def create_conversations_table(conn):
     )
 
 
-async def save_transcript_to_postgres(room_name, participant_identity, transcript_data):
-    """Save transcript to PostgreSQL database for user_X format identities."""
+async def save_transcript_to_postgres(room_name, participant_identity, transcript_data, session_type="call"):
+    """Save transcript to PostgreSQL database for authenticated users."""
     try:
         conn = await asyncpg.connect(
             host=PG_HOST,
@@ -529,43 +499,29 @@ async def save_transcript_to_postgres(room_name, participant_identity, transcrip
         # Ensure our table exists
         await create_conversations_table(conn)
 
-        # Extract user ID from participant identity (e.g., 'user_1' -> 1)
-        if participant_identity.startswith("user_"):
-            user_id = int(participant_identity.replace("user_", ""))
-        else:
-            # If it's a pure number string, use it directly
-            try:
-                user_id = int(participant_identity)
-            except ValueError:
-                # If it's not a valid integer, log error and return False
-                logger.error(
-                    "Cannot convert participant_identity '%s' to user_id for conversations table",
-                    participant_identity,
-                )
-                await conn.close()
-                return False
+        # Extract user ID from participant identity (now just a numeric string)
+        try:
+            user_id = int(participant_identity)
+        except ValueError:
+            await conn.close()
+            return False
 
-        # Insert the transcript data
+        # Insert the transcript data with session_type
         await conn.execute(
             """
-        INSERT INTO conversations (room_name, user_id, timestamp, transcript)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO conversations (room_name, user_id, session_type, timestamp, transcript)
+        VALUES ($1, $2, $3, $4, $5)
         """,
             room_name,
             user_id,
+            session_type,
             datetime.utcnow(),
             json.dumps(transcript_data),
         )
 
-        logger.info(
-            "Transcript for room %s and user_id %s saved to PostgreSQL",
-            room_name,
-            user_id,
-        )
         await conn.close()
         return True
     except Exception as e:
-        logger.error("Error saving transcript to PostgreSQL: %s", e)
         await conn.close()
         return False
 
