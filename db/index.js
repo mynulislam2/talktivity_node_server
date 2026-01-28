@@ -38,7 +38,7 @@ const pool = new Pool({
     max: 20, // Maximum number of clients in the pool
     idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
     connectionTimeoutMillis: 2000, // How long to wait for a connection to become available
-    ssl:{
+    ssl: {
         rejectUnauthorized: false // Disable SSL verification for development
     }
 });
@@ -135,10 +135,10 @@ const initTables = async () => {
     let client;
     let retryCount = 0;
     const maxRetries = 3;
-    
+
     // Initialize functions first
     await initFunctions();
-    
+
     while (retryCount < maxRetries) {
         try {
             client = await pool.connect();
@@ -147,8 +147,8 @@ const initTables = async () => {
             // Use transactions for table creation to ensure atomicity
             await client.query('BEGIN');
 
-        // Updated Users table with Google OAuth support
-        await client.query(`
+            // Updated Users table with Google OAuth support
+            await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
@@ -164,18 +164,18 @@ const initTables = async () => {
             );
         `);
 
-        // Create indices for users table
-        await client.query(`
+            // Create indices for users table
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
             CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
             CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
         `);
 
-        // User devices table removed - all functionality now uses userId
+            // User devices table removed - all functionality now uses userId
 
-        // Conversations table with indices
-        await client.query(`
+            // Conversations table with indices
+            await client.query(`
             CREATE TABLE IF NOT EXISTS conversations (
                 id SERIAL PRIMARY KEY,
                 room_name VARCHAR(255) NOT NULL,
@@ -189,15 +189,15 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_conversations_room ON conversations(room_name);
             CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp);
             CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
             CREATE INDEX IF NOT EXISTS idx_conversations_session_duration ON conversations(session_duration) WHERE session_duration IS NOT NULL;
         `);
 
-        // Onboarding data table
-        await client.query(`
+            // Onboarding data table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS onboarding_data (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -222,12 +222,12 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_onboarding_user_id ON onboarding_data(user_id);
         `);
 
-        // Optional: Create a sessions table for better session management
-        await client.query(`
+            // Optional: Create a sessions table for better session management
+            await client.query(`
             CREATE TABLE IF NOT EXISTS user_sessions (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -240,14 +240,14 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON user_sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token);
             CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
         `);
 
-        // Optional: Create a table for storing OAuth provider information
-        await client.query(`
+            // Optional: Create a table for storing OAuth provider information
+            await client.query(`
             CREATE TABLE IF NOT EXISTS user_oauth_providers (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -263,14 +263,14 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_oauth_user_id ON user_oauth_providers(user_id);
             CREATE INDEX IF NOT EXISTS idx_oauth_provider ON user_oauth_providers(provider);
             CREATE INDEX IF NOT EXISTS idx_oauth_provider_user_id ON user_oauth_providers(provider_user_id);
         `);
 
-        // Course management tables
-        await client.query(`
+            // Course management tables
+            await client.query(`
             CREATE TABLE IF NOT EXISTS user_courses (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -288,51 +288,61 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
             CREATE INDEX IF NOT EXISTS idx_user_courses_active ON user_courses(is_active);
         `);
 
-        // Daily progress tracking
-        await client.query(`
+            // Daily progress tracking (call_sessions table for non-subscribed users only)
+            await client.query(`
             CREATE TABLE IF NOT EXISTS daily_progress (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 course_id INTEGER NOT NULL,
                 week_number INTEGER NOT NULL,
                 day_number INTEGER NOT NULL,
-                date DATE NOT NULL,
+                progress_date DATE NOT NULL,
+
+                -- Speaking / practice session (for subscribed users)
+                speaking_started_at TIMESTAMP,
+                speaking_ended_at TIMESTAMP,
                 speaking_completed BOOLEAN DEFAULT false,
-                speaking_start_time TIMESTAMP,
-                speaking_end_time TIMESTAMP,
                 speaking_duration_seconds INTEGER DEFAULT 0,
-                quiz_completed BOOLEAN DEFAULT false,
-                quiz_score INTEGER,
-                quiz_attempts INTEGER DEFAULT 0,
+
+                -- Speaking quiz
+                speaking_quiz_completed BOOLEAN DEFAULT false,
+                speaking_quiz_score INTEGER,
+
+                -- Listening
                 listening_completed BOOLEAN DEFAULT false,
-                listening_start_time TIMESTAMP,
-                listening_end_time TIMESTAMP,
-                listening_duration_seconds INTEGER DEFAULT 0,
                 listening_quiz_completed BOOLEAN DEFAULT false,
-                roleplay_completed BOOLEAN DEFAULT false,
                 listening_quiz_score INTEGER,
-                listening_quiz_attempts INTEGER DEFAULT 0,
+
+                -- Roleplay
+                roleplay_started_at TIMESTAMP,
+                roleplay_ended_at TIMESTAMP,
+                roleplay_completed BOOLEAN DEFAULT false,
+                roleplay_duration_seconds INTEGER DEFAULT 0,
+
+                -- Totals
+                total_time_seconds INTEGER DEFAULT 0,
+
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (course_id) REFERENCES user_courses(id) ON DELETE CASCADE,
-                UNIQUE(user_id, date)
+                UNIQUE(user_id, progress_date)
             );
         `);
 
-        await client.query(`
-            CREATE INDEX IF NOT EXISTS idx_daily_progress_user_date ON daily_progress(user_id, date);
+            await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_daily_progress_user_date ON daily_progress(user_id, progress_date);
             CREATE INDEX IF NOT EXISTS idx_daily_progress_course ON daily_progress(course_id);
             CREATE INDEX IF NOT EXISTS idx_daily_progress_week_day ON daily_progress(week_number, day_number);
         `);
 
-        // Weekly exam results
-        await client.query(`
+            // Weekly exam results
+            await client.query(`
             CREATE TABLE IF NOT EXISTS weekly_exams (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -350,13 +360,13 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_weekly_exams_user_week ON weekly_exams(user_id, week_number);
             CREATE INDEX IF NOT EXISTS idx_weekly_exams_course ON weekly_exams(course_id);
         `);
 
-        // Lifetime call usage tracking (global 5-minute cap for all users)
-        await client.query(`
+            // Lifetime call usage tracking (global 5-minute cap for all users)
+            await client.query(`
             CREATE TABLE IF NOT EXISTS lifetime_call_usage (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -366,12 +376,12 @@ const initTables = async () => {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
         `);
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_lifetime_call_usage_user ON lifetime_call_usage(user_id);
         `);
 
-        // Speaking sessions table for tracking multiple calls per day
-        await client.query(`
+            // Speaking sessions table for tracking multiple calls per day
+            await client.query(`
             CREATE TABLE IF NOT EXISTS speaking_sessions (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -386,12 +396,12 @@ const initTables = async () => {
                 FOREIGN KEY (course_id) REFERENCES user_courses(id) ON DELETE CASCADE
             );
         `);
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_speaking_sessions_user_date ON speaking_sessions(user_id, date);
         `);
 
-        // Groups table for chat functionality
-        await client.query(`
+            // Groups table for chat functionality
+            await client.query(`
             CREATE TABLE IF NOT EXISTS groups (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
@@ -404,13 +414,13 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_groups_common ON groups(is_common);
             CREATE INDEX IF NOT EXISTS idx_groups_created_by ON groups(created_by);
         `);
 
-        // Group members table
-        await client.query(`
+            // Group members table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS group_members (
                 id SERIAL PRIMARY KEY,
                 group_id INTEGER NOT NULL,
@@ -422,13 +432,13 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id);
             CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id);
         `);
 
-        // Group messages table
-        await client.query(`
+            // Group messages table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS group_messages (
                 id SERIAL PRIMARY KEY,
                 group_id INTEGER NOT NULL,
@@ -442,14 +452,14 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_group_messages_group_id ON group_messages(group_id);
             CREATE INDEX IF NOT EXISTS idx_group_messages_user_id ON group_messages(user_id);
             CREATE INDEX IF NOT EXISTS idx_group_messages_created_at ON group_messages(created_at);
         `);
 
-        // DM (Direct Messages) table
-        await client.query(`
+            // DM (Direct Messages) table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS dms (
                 id SERIAL PRIMARY KEY,
                 user1_id INTEGER NOT NULL,
@@ -461,13 +471,13 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_dms_user1_id ON dms(user1_id);
             CREATE INDEX IF NOT EXISTS idx_dms_user2_id ON dms(user2_id);
         `);
 
-        // DM messages table
-        await client.query(`
+            // DM messages table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS dm_messages (
                 id SERIAL PRIMARY KEY,
                 dm_id INTEGER NOT NULL,
@@ -481,14 +491,14 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_dm_messages_dm_id ON dm_messages(dm_id);
             CREATE INDEX IF NOT EXISTS idx_dm_messages_sender_id ON dm_messages(sender_id);
             CREATE INDEX IF NOT EXISTS idx_dm_messages_created_at ON dm_messages(created_at);
         `);
 
-        // Last read tracking table
-        await client.query(`
+            // Last read tracking table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS last_read_at (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -502,21 +512,21 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_last_read_user_id ON last_read_at(user_id);
             CREATE INDEX IF NOT EXISTS idx_last_read_group_id ON last_read_at(group_id);
             CREATE INDEX IF NOT EXISTS idx_last_read_dm_id ON last_read_at(dm_id);
         `);
 
-        // Create default common group if it doesn't exist
-        await client.query(`
+            // Create default common group if it doesn't exist
+            await client.query(`
             INSERT INTO groups (name, description, is_common) 
             VALUES ('Common Group', 'Default group for all users', true)
             ON CONFLICT DO NOTHING
         `);
-        
-        // Daily reports table
-        await client.query(`
+
+            // Daily reports table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS daily_reports (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -529,13 +539,13 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date ON daily_reports(user_id, report_date);
             CREATE INDEX IF NOT EXISTS idx_daily_reports_date ON daily_reports(report_date);
         `);
 
-        // Topic categories table
-        await client.query(`
+            // Topic categories table
+            await client.query(`
             CREATE TABLE IF NOT EXISTS topic_categories (
                 id SERIAL PRIMARY KEY,
                 category_name VARCHAR(255) UNIQUE NOT NULL,
@@ -545,21 +555,44 @@ const initTables = async () => {
             );
         `);
 
-        await client.query(`
+            await client.query(`
             CREATE INDEX IF NOT EXISTS idx_topic_categories_name ON topic_categories(category_name);
         `);
-        
-        // Small delay to prevent deadlocks
-        await new Promise(resolve => setTimeout(resolve, 100));
+
+            // User lifecycle table (centralized user flags & lifetime call tracking)
+            await client.query(`
+            CREATE TABLE IF NOT EXISTS user_lifecycle (
+                user_id INTEGER PRIMARY KEY,
+                onboarding_completed BOOLEAN DEFAULT false,
+                onboarding_steps JSONB DEFAULT '[]',
+                onboarding_test_call_used BOOLEAN DEFAULT false,
+                call_completed BOOLEAN DEFAULT false,
+                report_completed BOOLEAN DEFAULT false,
+                upgrade_completed BOOLEAN DEFAULT false,
+                lifetime_call_seconds INTEGER DEFAULT 0,
+                lifetime_call_cap_seconds INTEGER DEFAULT 300,
+                last_progress_check_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+
+            await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_user_lifecycle_user_id ON user_lifecycle(user_id);
+        `);
+
+            // Small delay to prevent deadlocks
+            await new Promise(resolve => setTimeout(resolve, 100));
 
             await client.query('COMMIT');
-            
+
             // Note: Admin users are now created via secure token-based registration
             // Use /api/auth/admin-register endpoint with ADMIN_SETUP_TOKEN
-            
+
             console.log('✅ Database tables initialized successfully');
             return true;
-            
+
         } catch (error) {
             if (client) {
                 try {
@@ -568,22 +601,22 @@ const initTables = async () => {
                     console.error('Error during rollback:', rollbackError.message);
                 }
             }
-            
+
             // Check if it's a deadlock error
             if (error.code === '40P01' || error.message.includes('deadlock')) {
                 retryCount++;
                 console.warn(`⚠️  Deadlock detected, retrying... (${retryCount}/${maxRetries})`);
-                
+
                 if (client) {
                     client.release();
                     client = null;
                 }
-                
+
                 // Wait before retrying (exponential backoff)
                 await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
                 continue;
             }
-            
+
             // For other errors, don't retry
             console.error('❌ Error initializing database tables:', error.message);
             console.error('Error details:', error.stack);
@@ -592,7 +625,7 @@ const initTables = async () => {
             if (client) client.release();
         }
     }
-    
+
     // If we get here, all retries failed
     console.error('❌ Failed to initialize database tables after', maxRetries, 'attempts');
     return false;
@@ -622,10 +655,10 @@ const getDatabaseStats = async () => {
     let client;
     try {
         client = await pool.connect();
-        
+
         const tables = ['users', 'conversations', 'onboarding_data', 'user_sessions', 'user_oauth_providers'];
         const stats = {};
-        
+
         for (const table of tables) {
             try {
                 const result = await client.query(`SELECT COUNT(*) as count FROM ${table}`);
@@ -634,7 +667,7 @@ const getDatabaseStats = async () => {
                 stats[table] = 'Table not found';
             }
         }
-        
+
         return stats;
     } catch (error) {
         console.error('❌ Error getting database stats:', error.message);
@@ -657,12 +690,12 @@ const gracefulShutdown = async () => {
 };
 
 const migrateUsersTable = async () => {
-  let client;
-  try {
-    client = await pool.connect();
-    
-    // Add new columns if they don't exist
-    await client.query(`
+    let client;
+    try {
+        client = await pool.connect();
+
+        // Add new columns if they don't exist
+        await client.query(`
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE,
       ADD COLUMN IF NOT EXISTS profile_picture TEXT,
@@ -672,58 +705,58 @@ const migrateUsersTable = async () => {
       ADD COLUMN IF NOT EXISTS call_completed BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
     `);
-    
-    // Create indices for new columns
-    await client.query(`
+
+        // Create indices for new columns
+        await client.query(`
       CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
       CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider);
       CREATE INDEX IF NOT EXISTS idx_users_report_completed ON users(report_completed);
       CREATE INDEX IF NOT EXISTS idx_users_call_completed ON users(call_completed);
       CREATE INDEX IF NOT EXISTS idx_users_onboarding_completed ON users(onboarding_completed);
     `);
-    
-    // Make password nullable for existing table
-    await client.query(`
+
+        // Make password nullable for existing table
+        await client.query(`
       ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
     `);
-    
-    console.log('✅ Users table migration completed successfully');
-    return true;
-  } catch (error) {
-    console.error('❌ Error migrating users table:', error.message);
-    return false;
-  } finally {
-    if (client) client.release();
-  }
+
+        console.log('✅ Users table migration completed successfully');
+        return true;
+    } catch (error) {
+        console.error('❌ Error migrating users table:', error.message);
+        return false;
+    } finally {
+        if (client) client.release();
+    }
 };
 
 // Daily Reports Functions
 const getDailyReport = async (userId, reportDate) => {
-  let client;
-  try {
-    client = await pool.connect();
-    
-    const result = await client.query(`
+    let client;
+    try {
+        client = await pool.connect();
+
+        const result = await client.query(`
       SELECT report_data, created_at, updated_at
       FROM daily_reports 
       WHERE user_id = $1 AND report_date = $2
     `, [userId, reportDate]);
-    
-    return result.rows[0] || null;
-  } catch (error) {
-    console.error('❌ Error getting daily report:', error.message);
-    throw error;
-  } finally {
-    if (client) client.release();
-  }
+
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error('❌ Error getting daily report:', error.message);
+        throw error;
+    } finally {
+        if (client) client.release();
+    }
 };
 
 const saveDailyReport = async (userId, reportDate, reportData) => {
-  let client;
-  try {
-    client = await pool.connect();
-    
-    const result = await client.query(`
+    let client;
+    try {
+        client = await pool.connect();
+
+        const result = await client.query(`
       INSERT INTO daily_reports (user_id, report_date, report_data)
       VALUES ($1, $2, $3)
       ON CONFLICT (user_id, report_date) 
@@ -732,34 +765,34 @@ const saveDailyReport = async (userId, reportDate, reportData) => {
         updated_at = CURRENT_TIMESTAMP
       RETURNING id, created_at, updated_at
     `, [userId, reportDate, reportData]);
-    
-    return result.rows[0];
-  } catch (error) {
-    console.error('❌ Error saving daily report:', error.message);
-    throw error;
-  } finally {
-    if (client) client.release();
-  }
+
+        return result.rows[0];
+    } catch (error) {
+        console.error('❌ Error saving daily report:', error.message);
+        throw error;
+    } finally {
+        if (client) client.release();
+    }
 };
 
 const deleteDailyReport = async (userId, reportDate) => {
-  let client;
-  try {
-    client = await pool.connect();
-    
-    const result = await client.query(`
+    let client;
+    try {
+        client = await pool.connect();
+
+        const result = await client.query(`
       DELETE FROM daily_reports 
       WHERE user_id = $1 AND report_date = $2
       RETURNING id
     `, [userId, reportDate]);
-    
-    return result.rows[0] || null;
-  } catch (error) {
-    console.error('❌ Error deleting daily report:', error.message);
-    throw error;
-  } finally {
-    if (client) client.release();
-  }
+
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error('❌ Error deleting daily report:', error.message);
+        throw error;
+    } finally {
+        if (client) client.release();
+    }
 };
 
 
@@ -769,7 +802,7 @@ const startPeriodicCleanup = () => {
     setInterval(async () => {
         await cleanupExpiredSessions();
     }, 60 * 60 * 1000); // 1 hour in milliseconds
-    
+
     console.log('🔄 Periodic session cleanup started (runs every hour)');
 };
 

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import asyncpg
 
 from config import PG_DATABASE, PG_HOST, PG_PASSWORD, PG_PORT, PG_USER, logger
+from utils.timezone import get_utc_now, get_utc_today
 
 
 async def test_postgres_connection():
@@ -64,7 +65,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
             SELECT s.*, sp.plan_type, sp.features
             FROM subscriptions s
             JOIN subscription_plans sp ON s.plan_id = sp.id
-            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > (NOW() AT TIME ZONE 'UTC')
             ORDER BY s.created_at DESC
             LIMIT 1
         """
@@ -78,7 +79,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
         is_free_trial = (
             subscription["is_free_trial"]
             and subscription["free_trial_started_at"]
-            and datetime.now()
+            and get_utc_now()
             < subscription["free_trial_started_at"] + timedelta(days=7)
         )
 
@@ -90,7 +91,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
             else ROLEPLAY_CAP_PRO_SECONDS
         )
 
-        today = datetime.utcnow().date()
+        today = get_utc_today()
         usage_query = """
             SELECT practice_time_seconds, roleplay_time_seconds
             FROM daily_usage 
@@ -153,7 +154,7 @@ async def get_remaining_time_during_call(
             SELECT s.*, sp.plan_type, sp.features
             FROM subscriptions s
             JOIN subscription_plans sp ON s.plan_id = sp.id
-            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()
+            WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > (NOW() AT TIME ZONE 'UTC')
             ORDER BY s.created_at DESC
             LIMIT 1
         """
@@ -182,17 +183,18 @@ async def get_remaining_time_during_call(
         else:
             roleplay_cap = 0
 
-        # Get TODAY's usage only (per-type, not pooled)
-        today = datetime.utcnow().date()
+        # Get TODAY's usage from daily_progress (per-type, not pooled)
+        today = get_utc_today()
         usage_query = """
-            SELECT practice_time_seconds, roleplay_time_seconds
-            FROM daily_usage 
-            WHERE user_id = $1 AND usage_date = $2
+            SELECT speaking_duration_seconds AS practice_time_seconds,
+                   roleplay_duration_seconds AS roleplay_time_seconds
+            FROM daily_progress 
+            WHERE user_id = $1 AND progress_date = $2
         """
         usage_result = await conn.fetchrow(usage_query, user_id, today)
 
-        practice_used = usage_result["practice_time_seconds"] if usage_result else 0
-        roleplay_used = usage_result["roleplay_time_seconds"] if usage_result else 0
+        practice_used = int(usage_result["practice_time_seconds"] or 0) if usage_result else 0
+        roleplay_used = int(usage_result["roleplay_time_seconds"] or 0) if usage_result else 0
 
         if session_type == "practice":
             remaining_time_seconds = practice_cap - (practice_used + current_session_duration_seconds)
@@ -213,7 +215,7 @@ async def record_session_usage(user_id: int, session_type: str, duration_seconds
     """
     Persist usage after a session ends.
     - call: insert into lifetime_call_usage (no daily_usage impact)
-    - practice/roleplay: upsert into daily_usage per-type and total_time_seconds
+    - practice/roleplay: daily totals now come from daily_progress (no daily_usage writes)
     """
     try:
         conn = await asyncpg.connect(
@@ -243,22 +245,8 @@ async def record_session_usage(user_id: int, session_type: str, duration_seconds
             await conn.close()
             return False
 
-        today = datetime.utcnow().date()
-        column = "practice_time_seconds" if session_type == "practice" else "roleplay_time_seconds"
-
-        await conn.execute(
-            f"""
-            INSERT INTO daily_usage (user_id, usage_date, {column}, total_time_seconds)
-            VALUES ($1, $2, $3, $3)
-            ON CONFLICT (user_id, usage_date) DO UPDATE
-            SET {column} = daily_usage.{column} + $3,
-                total_time_seconds = daily_usage.total_time_seconds + $3,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            user_id,
-            today,
-            duration_seconds,
-        )
+        # Practice/roleplay usage is now accumulated via daily_progress updates in the agent.
+        # We no longer write to the deprecated daily_usage table here.
         await conn.close()
         return True
 
@@ -276,7 +264,7 @@ async def update_course_speaking_progress(user_id: int) -> bool:
     Rule: If today's total speaking time >= 5 minutes, mark
     daily_progress.speaking_completed = true and store speaking_duration_seconds.
 
-    Source of truth for time: daily_usage.practice_time_seconds + daily_usage.roleplay_time_seconds.
+    Source of truth for time: daily_progress.speaking_duration_seconds + daily_progress.roleplay_duration_seconds.
     """
     try:
         conn = await asyncpg.connect(
@@ -303,7 +291,7 @@ async def update_course_speaking_progress(user_id: int) -> bool:
             await conn.close()
             return False
 
-        today_date = datetime.utcnow().date()
+        today_date = get_utc_today()
         course_start = course["course_start_date"]
         # course_start may be date or datetime
         if isinstance(course_start, datetime):
@@ -317,9 +305,10 @@ async def update_course_speaking_progress(user_id: int) -> bool:
 
         usage = await conn.fetchrow(
             """
-            SELECT practice_time_seconds, roleplay_time_seconds
-            FROM daily_usage
-            WHERE user_id = $1 AND usage_date = $2
+            SELECT speaking_duration_seconds AS practice_time_seconds,
+                   roleplay_duration_seconds AS roleplay_time_seconds
+            FROM daily_progress
+            WHERE user_id = $1 AND progress_date = $2
             """,
             user_id,
             today_date,
@@ -341,20 +330,20 @@ async def update_course_speaking_progress(user_id: int) -> bool:
                 course_id,
                 week_number,
                 day_number,
-                date,
+                progress_date,
                 speaking_completed,
-                speaking_end_time,
+                speaking_ended_at,
                 speaking_duration_seconds
             )
-            VALUES ($1, $2, $3, $4, $5, true, NOW(), $6)
-            ON CONFLICT (user_id, date) DO UPDATE SET
+            VALUES ($1, $2, $3, $4, $5, true, (NOW() AT TIME ZONE 'UTC'), $6)
+            ON CONFLICT (user_id, progress_date) DO UPDATE SET
                 course_id = EXCLUDED.course_id,
                 week_number = EXCLUDED.week_number,
                 day_number = EXCLUDED.day_number,
                 speaking_completed = true,
-                speaking_end_time = NOW(),
+                speaking_ended_at = (NOW() AT TIME ZONE 'UTC'),
                 speaking_duration_seconds = GREATEST(daily_progress.speaking_duration_seconds, EXCLUDED.speaking_duration_seconds),
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = (NOW() AT TIME ZONE 'UTC')
             """,
             user_id,
             course["id"],
@@ -407,7 +396,7 @@ async def ensure_test_call_usage_table(conn):
     CREATE TABLE IF NOT EXISTS test_call_usage (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
-        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
         duration_seconds INTEGER NOT NULL
     )
     """
@@ -447,7 +436,7 @@ async def create_conversations_table(conn):
         room_name VARCHAR(255) NOT NULL,
         user_id INTEGER NOT NULL,
         session_type VARCHAR(50) DEFAULT 'call',
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        timestamp TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
         transcript JSONB NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )
@@ -515,7 +504,7 @@ async def save_transcript_to_postgres(room_name, participant_identity, transcrip
             room_name,
             user_id,
             session_type,
-            datetime.utcnow(),
+            get_utc_now(),
             json.dumps(transcript_data),
         )
 

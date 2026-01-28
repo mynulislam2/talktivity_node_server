@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
+from utils.timezone import get_utc_now, get_utc_today
+
 
 @dataclass
 class UserProfile:
@@ -58,7 +60,7 @@ class SessionInfo:
     @property
     def duration_seconds(self) -> int:
         """Calculate session duration in seconds."""
-        return int((datetime.utcnow() - self.start_time).total_seconds())
+        return int((get_utc_now() - self.start_time).total_seconds())
 
 
 @dataclass
@@ -70,7 +72,7 @@ class TranscriptData:
     session_type: str
     transcript: Dict[str, Any]
     duration_seconds: int
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=get_utc_now)
 
 
 @dataclass
@@ -80,7 +82,7 @@ class UsageRecord:
     user_id: int
     session_type: str
     duration_seconds: int
-    usage_date: datetime = field(default_factory=lambda: datetime.utcnow().date())
+    usage_date: datetime = field(default_factory=get_utc_today)
 
 
 @dataclass

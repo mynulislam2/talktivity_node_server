@@ -21,6 +21,7 @@ from services import (
     emit_session_saved,
     get_logger,
 )
+from utils.timezone import get_utc_now
 
 logger = get_logger(__name__)
 
@@ -115,6 +116,11 @@ class TimeCheckHandler:
         user_id = self.session_info["user_id"]
         session_type = self.session_info["session_type"]
         start_time = self.session_info["start_time"]
+        
+        # For call sessions, use call_start_time if available (stored in memory)
+        call_start_time = self.session_info.get("call_start_time")
+        if session_type == "call" and call_start_time:
+            start_time = call_start_time
 
         while not self.session_info["session_disconnected"]:
             try:
@@ -125,19 +131,25 @@ class TimeCheckHandler:
                     logger.info("Session already disconnected, stopping time check")
                     break
                 
-                # Calculate current session duration
-                current_duration = int((datetime.utcnow() - start_time).total_seconds())
+                # Calculate elapsed time in memory (NO database query for elapsed time)
+                elapsed_seconds = int((get_utc_now() - start_time).total_seconds())
                 
-                # Get remaining time accounting for current session
-                remaining = await self.time_limit_service.get_remaining_time_during_session(
-                    user_id, session_type, current_duration
-                )
+                # For call sessions, check lifetime limit using existing sessions only
+                if session_type == "call":
+                    remaining = await self.time_limit_service.get_remaining_lifetime_time(
+                        user_id, elapsed_seconds
+                    )
+                else:
+                    # For practice/roleplay, use existing logic
+                    remaining = await self.time_limit_service.get_remaining_time_during_session(
+                        user_id, session_type, elapsed_seconds
+                    )
                 
                 logger.info(
                     "Time check - User %s, Session: %s, Duration: %ss, Remaining: %ss",
                     user_id,
                     session_type,
-                    current_duration,
+                    elapsed_seconds,
                     remaining,
                 )
                 
@@ -265,15 +277,23 @@ class TranscriptSaveHandler:
         
         # Save transcript to database
         try:
-            # Calculate duration
-            duration_seconds = int((datetime.utcnow() - self.session_info.get("start_time", datetime.utcnow())).total_seconds())
+            # Calculate duration from memory (for call sessions, use call_start_time)
+            session_type = self.session_info["session_type"]
+            if session_type == "call" and "call_start_time" in self.session_info:
+                call_start_time = self.session_info["call_start_time"]
+                call_ended_at = get_utc_now()
+                duration_seconds = int((call_ended_at - call_start_time).total_seconds())
+            else:
+                start_time = self.session_info.get("start_time", get_utc_now())
+                duration_seconds = int((get_utc_now() - start_time).total_seconds())
             
             save_success = await self.transcript_service.save_session_transcript(
                 user_id=user_id,
                 room_name=room_name,
-                session_type=self.session_info["session_type"],
+                session_type=session_type,
                 transcript=transcript_data,
                 duration_seconds=duration_seconds,
+                session_info=self.session_info,  # Pass session_info for call_start_time
             )
         except Exception as e:
             logger.error("Error saving transcript: %s", e)

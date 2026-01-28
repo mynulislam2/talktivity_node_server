@@ -21,6 +21,7 @@ from agent import EmotiveAgent
 from config import Config, load_environment
 from database import DatabasePool, test_connection
 from services import setup_logging, get_logger, emit_session_save_failed
+from utils.timezone import get_utc_now
 from .session_manager import SessionManager
 from .handlers import LLMErrorHandler, TimeCheckHandler, TranscriptSaveHandler
 
@@ -117,9 +118,19 @@ async def entrypoint(ctx: JobContext):
     session, llm_instance = session_manager.create_session(ctx, config.google.api_key)
 
     # Prepare session info for handlers
+    session_start_time = get_utc_now()
     session_info = session_manager.get_session_info(
-        user_id, session_type, room_name, datetime.utcnow()
+        user_id, session_type, room_name, session_start_time
     )
+    
+    # For call sessions, store call_start_time in memory (NO database insert)
+    if session_type == "call":
+        session_info["call_start_time"] = session_start_time
+        logger.info(
+            "Call session started for user %s at %s (stored in memory, no DB insert)",
+            user_id,
+            session_start_time.isoformat()
+        )
 
     # Setup LLM error handler
     llm_error_handler = LLMErrorHandler(session, ctx, config, session_info)

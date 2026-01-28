@@ -15,6 +15,7 @@ from livekit.plugins.turn_detector.english import EnglishModel
 from config import Config
 from database import UserRepository, DatabasePool
 from services import TimeLimitService, get_logger
+from utils.timezone import get_utc_now
 
 logger = get_logger(__name__)
 
@@ -55,7 +56,7 @@ class SessionManager:
         custom_prompt = ""
         first_prompt = ""
         session_type = "call"
-        room_name = f"room_{datetime.utcnow().timestamp()}"
+        room_name = f"room_{get_utc_now().timestamp()}"
 
         try:
             if participant.metadata and hasattr(participant.metadata, "__str__"):
@@ -135,7 +136,8 @@ class SessionManager:
             Configured AgentSession instance
         """
         llm_instance = google.LLM(
-            model="gemini-2.0-flash-exp",
+            # Use a stable, generally available Gemini model compatible with v1beta generateContent
+            model="gemini-2.0-flash",
             temperature=1,
             vertexai=False,
             api_key=google_api_key if google_api_key else None,

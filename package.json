@@ -7,6 +7,8 @@
         "start": "node server.js",
         "dev": "nodemon server.js",
         "migrate": "node migrate-existing-users.js",
+        "db:backfill-lifecycle": "node db/backfill_user_lifecycle.js",
+        "db:run-migrations": "node db/run-migrations.js",
         "build:agent": "tsc -p tsconfig.json",
         "start:agent": "node dist/agent/index.js dev",
         "dev:agent": "npm run build:agent && npm run start:agent",
@@ -30,9 +32,11 @@
         "express-validator": "^7.2.1",
         "google-auth-library": "^10.1.0",
         "helmet": "^8.1.0",
+        "joi": "^18.0.2",
         "jsonwebtoken": "^9.0.2",
         "jws": "^4.0.1",
         "multer": "^2.0.2",
+        "patch-package": "^8.0.1",
         "pdf-parse": "^1.1.1",
         "pg": "^8.15.6",
         "react-circular-progressbar": "^2.2.0",
@@ -41,8 +45,7 @@
         "react-markdown": "^10.1.0",
         "remark-gfm": "^4.0.1",
         "socket.io": "^4.8.1",
-        "swiper": "^11.2.10",
-        "patch-package": "^8.0.1"
+        "swiper": "^11.2.10"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",

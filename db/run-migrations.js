@@ -22,6 +22,14 @@ const runMigrations = async () => {
     client = await pool.connect();
     console.log('🔄 Starting database migrations...');
 
+    const safeRollback = async () => {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {
+        // ignore (no active transaction / already rolled back)
+      }
+    };
+
     // Get all migration files
     const migrationsDir = path.join(__dirname, 'migrations');
     const migrationFiles = fs.readdirSync(migrationsDir)
@@ -41,8 +49,12 @@ const runMigrations = async () => {
         console.log(`✅ Migration ${file} completed successfully`);
       } catch (error) {
         if (error.message.includes('already exists')) {
+          // Some migration files wrap statements in BEGIN/COMMIT.
+          // If they fail mid-transaction and we "skip", we must rollback or the connection stays aborted.
+          await safeRollback();
           console.log(`⚠️  Migration ${file} already applied, skipping...`);
         } else {
+          await safeRollback();
           console.error(`❌ Error running migration ${file}:`, error.message);
           throw error;
         }

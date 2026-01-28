@@ -1,10 +1,15 @@
 // server.js
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const { body, validationResult } = require('express-validator');
-const rateLimit = require('express-rate-limit');
+// NEW ARCHITECTURE: This is a wrapper that imports the modular app from src/app.js
+// All route definitions, controllers, and services are now in src/modules/
 require('dotenv').config();
+
+const http = require('http');
+const { initSocket } = require('./src/core/socket/socketService');
+const db = require('./db');
+const app = require('./src/app');
+
+// Configuration
+const port = process.env.API_PORT || 8082;
 
 // Environment variable validation
 const validateEnvironmentVariables = () => {
@@ -114,531 +119,23 @@ const validateEnvironmentVariables = () => {
 
 // Validate and configure CORS origins
 const getAllowedOrigins = () => {
-  // This function now relies on validateEnvironmentVariables() being called first
   const allowedOrigins = process.env.ALLOWED_ORIGINS;
-  
-  // Parse comma-separated origins
   const origins = allowedOrigins.split(',').map(origin => origin.trim());
-  
   console.log('✅ CORS origins configured:', origins);
   return origins;
 };
 
 const allowedOrigins = getAllowedOrigins();
 
-const onboardingRoutes = require('./routes/onboarding-routes');
-const googleRoutes = require('./routes/google_auth');
-const topicRoutes = require('./routes/topic-routes');
-const courseRoutes = require('./routes/course-routes');
-const dailyReportsRoutes = require('./routes/daily-reports');
-const adminRoutes = require('./routes/admin-routes');
-const http = require('http');
-const { Server } = require('socket.io');
-
-// Import database module (with pool and DB functions)
-const db = require('./db');
-
-// Import routes (AFTER db module is imported)
-const authRoutes = require('./routes/auth-routes');
-const transcriptRoutes = require('./routes/transcript-routes');
-const groupChatRoutes = require('./routes/group-chat');
-const dmRoutes = require('./routes/dm');
-const leaderboardRoutes = require('./routes/leaderboard-routes');
-const aiRoutes = require('./routes/ai-routes');
-const vocabularyRoutes = require('./routes/vocabulary-routes');
-const securePaymentRoutes = require('./routes/secure-payment-routes');
-const subscriptionRoutes = require('./routes/subscription-routes');
-const usageTrackingRoutes = require('./routes/usage-tracking');
-const manualActivationRoutes = require('./routes/manual-activation');
-const reportRoutes = require('./routes/report-routes');
-const userProgressRoutes = require('./routes/user-progress');
-// Create Express app
-const app = express();
-const port = process.env.API_PORT || 8082;
-
-// Trust proxy configuration - required when running behind a proxy (like Render)
-// This allows Express to trust the X-Forwarded-For header from the proxy
-app.set('trust proxy', 1);
-
-// Security middleware - Helmet.js for security headers
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "wss:", "ws:"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-    },
-  },
-  crossOriginEmbedderPolicy: false, // Allow Socket.IO to work
-  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow Socket.IO
-}));
-
-// Middleware
-app.use(express.json({ limit: '10mb' })); // Limit payload size
-
-// Global input sanitization middleware
-app.use((req, res, next) => {
-  // Sanitize request body
-  if (req.body) {
-    Object.keys(req.body).forEach(key => {
-      if (typeof req.body[key] === 'string') {
-        // Remove potential XSS vectors
-        req.body[key] = req.body[key]
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-          .replace(/javascript:/gi, '')
-          .replace(/on\w+\s*=/gi, '')
-          .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-          .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
-          .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '');
-      }
-    });
-  }
-  
-  // Sanitize query parameters
-  if (req.query) {
-    Object.keys(req.query).forEach(key => {
-      if (typeof req.query[key] === 'string') {
-        req.query[key] = req.query[key]
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-          .replace(/javascript:/gi, '')
-          .replace(/on\w+\s*=/gi, '')
-          .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-          .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
-          .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '');
-      }
-    });
-  }
-  
-  next();
-});
-
-// Rate limiting middleware
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 2000 : 1000, // Much higher limits
-  message: {
-    success: false,
-    error: 'Too many requests from this IP, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 200 : 100, // Much higher limits
-  message: {
-    success: false,
-    error: 'Too many authentication attempts, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful logins
-});
-
-const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 200 : 50, // Increased limits
-  message: {
-    success: false,
-    error: 'Too many admin requests, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful requests
-});
-
-const groupLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 1000 : 1000, // Much higher limits for group operations
-  message: {
-    success: false,
-    error: 'Too many group requests, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful requests
-});
-
-// Apply rate limiting
-app.use(globalLimiter);
-
-// Secure CORS configuration
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn(`⚠️  CORS blocked request from unauthorized origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin'],
-  credentials: true,
-  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
-}));
-
-// Request logging middleware (simple)
-app.use((req, res, next) => {
-  // Remove any debug logging or temporary debug code
-  next();
-});
-
-// Health check endpoint with DB connection status
-app.get('/health', async (req, res) => {
-  try {
-    const dbConnected = await db.testConnection();
-    
-    // Check environment variables
-    const envStatus = {
-      JWT_SECRET: process.env.JWT_SECRET ? 'configured' : 'missing',
-      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? 'configured' : 'missing',
-      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'missing',
-      GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI ? 'configured' : 'missing',
-      ADMIN_SETUP_TOKEN: process.env.ADMIN_SETUP_TOKEN ? 'configured' : 'missing',
-      ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ? 'configured' : 'missing'
-    };
-    
-    // Check database configuration
-    const dbConfig = {
-      host: process.env.PG_HOST ? 'configured' : 'missing',
-      port: process.env.PG_PORT ? 'configured' : 'missing',
-      database: process.env.PG_DATABASE ? 'configured' : 'missing',
-      user: process.env.PG_USER ? 'configured' : 'missing',
-      password: process.env.PG_PASSWORD ? 'configured' : 'missing'
-    };
-    
-    res.status(200).json({ 
-      status: 'OK', 
-      message: 'Server is up and running',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      database: {
-        connected: dbConnected,
-        config: dbConfig
-      },
-      environment_variables: envStatus,
-      uptime: process.uptime(),
-      memory: {
-        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
-        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
-      }
-    });
-  } catch (error) {
-    console.error('Health check error:', error);
-    res.status(500).json({
-      status: 'ERROR',
-      message: 'Health check failed',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-
-app.use('/api/auth', authLimiter, googleRoutes);
-app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api', transcriptRoutes);
-app.use('/api', onboardingRoutes);
-app.use('/api', topicRoutes);
-app.use('/api', courseRoutes);
-app.use('/api/daily-reports', dailyReportsRoutes);
-app.use('/api/admin', adminLimiter, adminRoutes);
-app.use('/api/groups', groupLimiter, groupChatRoutes);
-app.use('/api/group-chat', groupLimiter, groupChatRoutes); // Add this line to support both /groups and /group-chat endpoints
-
-// API endpoint for Python agent to emit session state events
-// States: SAVING_CONVERSATION, SESSION_SAVED, SESSION_SAVE_FAILED
-// IMPORTANT: This route MUST be defined before any catch-all routes
-app.post('/api/agent/session-state', express.json(), (req, res) => {
-  try {
-    const { user_id, state, call_id, message } = req.body;
-    
-    if (!user_id) {
-      return res.status(400).json({ success: false, error: 'user_id is required' });
-    }
-    
-    if (!state) {
-      return res.status(400).json({ success: false, error: 'state is required' });
-    }
-    
-    // Validate state values
-    const validStates = ['SAVING_CONVERSATION', 'SESSION_SAVED', 'SESSION_SAVE_FAILED'];
-    if (!validStates.includes(state)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: `Invalid state. Must be one of: ${validStates.join(', ')}` 
-      });
-    }
-    
-    const payload = {
-      type: 'SESSION_STATE',
-      state: state,
-      callId: call_id || null,
-      message: message || null,
-      targetUserId: typeof user_id === 'string' ? parseInt(user_id, 10) : user_id,
-      timestamp: new Date().toISOString(),
-    };
-    
-    // Convert user_id to number for comparison
-    const userIdNum = payload.targetUserId;
-    let emitted = false;
-    let socketCount = 0;
-    
-    console.log(`[Socket.IO] Emitting session_state '${state}' for user ${userIdNum}`);
-    
-    // Try multiple approaches to find and emit to the user's socket
-    // Approach 1: Direct socket matching by userId
-    io.sockets.sockets.forEach((socket) => {
-      socketCount++;
-      const socketUserId = socket.userId;
-      
-      // Compare as numbers to avoid type mismatch
-      if (socketUserId != null && Number(socketUserId) === Number(userIdNum)) {
-        socket.emit('session_state', payload);
-        emitted = true;
-        console.log(`[Socket.IO] ✅ Emitted session_state '${state}' to user ${userIdNum} (socket ${socket.id})`);
-      }
-    });
-    
-    // Approach 2: Try emitting to a user-specific room (if socket joined one)
-    const userRoom = `user:${userIdNum}`;
-    const roomSockets = io.sockets.adapter.rooms.get(userRoom);
-    if (roomSockets && roomSockets.size > 0) {
-      io.to(userRoom).emit('session_state', payload);
-      emitted = true;
-      console.log(`[Socket.IO] ✅ Emitted session_state '${state}' to room ${userRoom} (${roomSockets.size} socket(s))`);
-    }
-    
-    // Approach 3: Broadcast to all and let frontend filter (fallback)
-    if (!emitted) {
-      console.warn(`[Socket.IO] ⚠️ No direct socket found for user ${userIdNum}, broadcasting session_state to all`);
-      io.emit('session_state', payload);
-      emitted = true;
-      console.log(`[Socket.IO] 📢 Broadcasted session_state '${state}' with targetUserId=${userIdNum}`);
-    }
-    
-    console.log(`[Socket.IO] session_state '${state}' - Total sockets checked: ${socketCount}, Emitted: ${emitted}`);
-    
-    res.json({ success: true, message: `Session state '${state}' emitted`, emitted, state });
-  } catch (error) {
-    console.error('[Socket.IO] Error emitting session_state event:', error);
-    res.status(500).json({ success: false, error: 'Failed to emit session state event' });
-  }
-});
-
-app.use('/api/dms', dmRoutes);
-app.use('/api/leaderboard', leaderboardRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/vocabulary', vocabularyRoutes);
-app.use('/api', securePaymentRoutes);
-app.use('/api/payments', require('./routes/aamarpay-routes'));
-app.use('/api', subscriptionRoutes);
-app.use('/api/usage', usageTrackingRoutes);
-app.use('/api', manualActivationRoutes);
-app.use('/api/report', reportRoutes);
-app.use('/api/user', userProgressRoutes);
-// Mount /generate-report at root to match Python API structure (port 8090)
-// This allows frontend to call /generate-report directly
-app.use('/', reportRoutes);
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Route not found'
-  });
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  // Remove any debug logging or temporary debug code
-  const statusCode = err.statusCode || 500;
-  res.status(statusCode).json({
-    success: false,
-    error:'Internal server error'
-  });
-});
-
-
-// Handle termination signals
-process.on('SIGTERM', db.gracefulShutdown);
-process.on('SIGINT', db.gracefulShutdown);
-
-// Create HTTP server and wrap Express app
+// Create HTTP server
 const server = http.createServer(app);
 
-// Initialize Socket.IO with secure configuration
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true
-  },
-  transports: ['websocket', 'polling'], // Allow both WebSocket and polling
-  allowEIO3: true, // Allow Engine.IO v3 clients
-  pingTimeout: 60000,
-  pingInterval: 25000,
-  // Add authentication middleware
-  auth: {
-    headers: ['Authorization']
-  }
-});
+// Initialize Socket.IO via service
+const io = initSocket(server, allowedOrigins);
 
-// WebSocket authentication middleware
-io.use(async (socket, next) => {
-  try {
-    const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
-    
-    if (!token) {
-      console.warn(`⚠️  WebSocket connection rejected: No authentication token from ${socket.handshake.address}`);
-      return next(new Error('Authentication required'));
-    }
-    
-    // Remove 'Bearer ' prefix if present
-    const cleanToken = token.replace('Bearer ', '');
-    
-    // Verify JWT token
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.verify(cleanToken, process.env.JWT_SECRET);
-    
-    // Attach user info to socket
-    socket.userId = decoded.userId;
-    socket.userEmail = decoded.email;
-    
-    console.log(`✅ WebSocket authenticated: User ${decoded.userId} (${decoded.email}) from ${socket.handshake.address}`);
-    next();
-  } catch (error) {
-    console.warn(`⚠️  WebSocket authentication failed from ${socket.handshake.address}:`, error.message);
-    next(new Error('Invalid authentication token'));
-  }
-});
-
-// In-memory presence map: userId -> { socketId, lastSeen }
-const onlineUsers = new Map();
-
-io.on('connection', (socket) => {
-  console.log('[Socket.IO] New authenticated connection:', socket.id, 'User:', socket.userId);
-  console.log('[Socket.IO] Transport:', socket.conn.transport.name);
-  
-  // Use authenticated userId instead of query parameter
-  const userId = socket.userId;
-  if (userId) {
-    onlineUsers.set(userId, { socketId: socket.id, lastSeen: null });
-    io.emit('user_online', { userId });
-  }
-
-  // --- GROUP CHAT EVENTS ---
-  socket.on('join_group', ({ groupId }) => {
-    const room = `group:${groupId}`;
-    socket.join(room);
-    io.to(room).emit('user_joined', { userId: socket.userId });
-  });
-
-  socket.on('leave_group', ({ groupId }) => {
-    const room = `group:${groupId}`;
-    socket.leave(room);
-    io.to(room).emit('user_left', { userId: socket.userId });
-  });
-
-  socket.on('group_message', async ({ groupId, content }) => {
-    const room = `group:${groupId}`;
-    console.log('[Socket.IO] Received group_message:', { groupId, userId: socket.userId, content });
-    // Store message in DB
-    try {
-      const { rows } = await db.pool.query(
-        'INSERT INTO group_messages (group_id, user_id, content) VALUES ($1, $2, $3) RETURNING *',
-        [groupId, socket.userId, content]
-      );
-      const message = rows[0];
-      console.log('[Socket.IO] Saved message to DB:', message);
-      io.to(room).emit('group_message', { ...message, userId: socket.userId });
-      console.log('[Socket.IO] Broadcasted group_message to room:', room);
-    } catch (err) {
-      console.error('[Socket.IO] Failed to send message:', err);
-      socket.emit('error', { error: 'Failed to send message' });
-    }
-  });
-
-  socket.on('group_typing', ({ groupId, typing }) => {
-    const room = `group:${groupId}`;
-    socket.to(room).emit('group_typing', { userId: socket.userId, typing });
-  });
-
-  // --- DM CHAT EVENTS ---
-  socket.on('join_dm', ({ otherUserId }) => {
-    const room = `dm:${[socket.userId, otherUserId].sort().join(':')}`;
-    socket.join(room);
-  });
-
-  socket.on('leave_dm', ({ otherUserId }) => {
-    const room = `dm:${[socket.userId, otherUserId].sort().join(':')}`;
-    socket.leave(room);
-  });
-
-  socket.on('dm_message', async ({ dmId, receiverId, content }) => {
-    const room = `dm:${[socket.userId, receiverId].sort().join(':')}`;
-    // Store message in DB
-    try {
-      const { rows } = await db.pool.query(
-        'INSERT INTO dm_messages (dm_id, sender_id, content) VALUES ($1, $2, $3) RETURNING *',
-        [dmId, socket.userId, content]
-      );
-      const message = rows[0];
-      io.to(room).emit('dm_message', { ...message, senderId: socket.userId });
-    } catch (err) {
-      socket.emit('error', { error: 'Failed to send DM' });
-    }
-  });
-
-  socket.on('dm_typing', ({ otherUserId, typing }) => {
-    const room = `dm:${[socket.userId, otherUserId].sort().join(':')}`;
-    socket.to(room).emit('dm_typing', { userId: socket.userId, typing });
-  });
-
-  // --- UNREAD TRACKING ---
-  socket.on('mark_group_read', async ({ groupId }) => {
-    try {
-      await db.pool.query(
-        `UPDATE last_read_at SET last_read_at = NOW() WHERE user_id = $1 AND group_id = $2;
-         INSERT INTO last_read_at (user_id, group_id, last_read_at)
-         SELECT $1, $2, NOW()
-         WHERE NOT EXISTS (SELECT 1 FROM last_read_at WHERE user_id = $1 AND group_id = $2);`,
-        [socket.userId, groupId]
-      );
-    } catch (err) {}
-  });
-  
-  socket.on('mark_dm_read', async ({ dmId }) => {
-    try {
-      await db.pool.query(
-        `UPDATE last_read_at SET last_read_at = NOW() WHERE user_id = $1 AND dm_id = $2;
-         INSERT INTO last_read_at (user_id, dm_id, last_read_at)
-         SELECT $1, $2, NOW()
-         WHERE NOT EXISTS (SELECT 1 FROM last_read_at WHERE user_id = $1 AND dm_id = $2);`,
-        [socket.userId, dmId]
-      );
-    } catch (err) {}
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log('[Socket.IO] Authenticated client disconnected:', socket.id, 'User:', socket.userId, 'Reason:', reason);
-    if (userId) {
-      onlineUsers.delete(userId);
-      const lastSeen = new Date().toISOString();
-      io.emit('user_offline', { userId, lastSeen });
-    }
-  });
-});
+// Handle termination signals gracefully
+process.on('SIGTERM', db.gracefulShutdown);
+process.on('SIGINT', db.gracefulShutdown);
 
 // Start the server
 const startServer = async () => {
@@ -651,7 +148,7 @@ const startServer = async () => {
     const dbConnected = await db.testConnection();
     
     if (!dbConnected) {
-      // Remove any debug logging or temporary debug code
+      console.error('❌ Database connection failed');
       process.exit(1);
     }
     
@@ -659,37 +156,35 @@ const startServer = async () => {
     const tablesInitialized = await db.initTables();
     const migrateUsersTable = await db.migrateUsersTable();
     if (!tablesInitialized) {
-      // Remove any debug logging or temporary debug code
+      console.error('❌ Table initialization failed');
       process.exit(1);
     }
     
-    // Start the server (now using HTTP server for Socket.IO)
+    // Start the server
     server.listen(port, () => {
-      // Remove any debug logging or temporary debug code
-      console.log(`Server running on http://localhost:${port}`);
-      console.log(`WebSocket server ready on ws://localhost:${port}`);
-      console.log(`
-Available routes:
-  Authentication:
-  - POST   /api/auth/register
-  - POST   /api/auth/login
-  - GET    /api/auth/profile (requires authentication)
-  - PUT    /api/auth/profile (requires authentication)
-  - PUT    /api/auth/change-password (requires authentication)
-        
-  Transcripts:
-  - GET    /api/latest-transcript
-  - GET    /api/latest-transcript/:room_name
-  - GET    /api/transcripts
-  - GET    /api/transcripts/:id
-  - GET    /api/transcripts/room/:room_name
-  - POST   /api/transcripts
-  - DELETE /api/transcripts/:id
-        
-  Other:
-  - GET    /health
-      `);
-      
+      console.log(`\n✅ Server running on http://localhost:${port}`);
+      console.log(`✅ WebSocket server ready on ws://localhost:${port}`);
+      console.log(`\n📋 Available API Routes (via src/modules/):`);
+      console.log(`   GET    /health`);
+      console.log(`   - /api/auth/* (Standard auth routes)`);
+      console.log(`   - /api/auth/google/* (Google OAuth routes)`);
+      console.log(`   - /api/dms/* (Direct messaging)`);
+      console.log(`   - /api/groups/* (Group chat)`);
+      console.log(`   - /api/subscriptions/*`);
+      console.log(`   - /api/courses/*`);
+      console.log(`   - /api/daily-usage/*`);
+      console.log(`   - /api/reports/*`);
+      console.log(`   - /api/topics/*`);
+      console.log(`   - /api/vocabulary/*`);
+      console.log(`   - /api/listening/*`);
+      console.log(`   - /api/quizzes/*`);
+      console.log(`   - /api/leaderboard/*`);
+      console.log(`   - /api/progress/*`);
+      console.log(`   - /api/transcripts/*`);
+      console.log(`   - /api/onboarding/*`);
+      console.log(`   - /api/payment/*`);
+      console.log(`   - /api/connection/*`);
+      console.log(`   - /api/lifecycle/*\n`);
     });
   } catch (err) {
     console.error('❌ Server startup failed:', err);
