@@ -85,13 +85,17 @@ const authService = {
         throw new AuthError('User not found');
       }
 
-      const newToken = jwt.sign(
+      // Generate a new access token (7 days by default, aligned with existing login/register)
+      const accessToken = jwt.sign(
         { userId: user.id, email: user.email },
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
 
-      return { token: newToken };
+      // Approximate expiry in seconds for client-side token management
+      const expiresIn = 7 * 24 * 60 * 60;
+
+      return { accessToken, expiresIn };
     } catch (error) {
       throw new AuthError('Invalid refresh token');
     }

@@ -241,6 +241,26 @@ async function createOrUpdateGoogleUser(email, name, picture, googleId) {
 
       const createdUser = newUserResult.rows[0];
 
+      // Initialize user_lifecycle for new Google users so lifecycle API works like form registration
+      try {
+        await client.query(
+          `INSERT INTO user_lifecycle (
+             user_id,
+             onboarding_completed,
+             call_completed,
+             report_completed,
+             upgrade_completed,
+             created_at,
+             updated_at
+           ) VALUES ($1, false, false, false, false, NOW(), NOW())
+           ON CONFLICT (user_id) DO NOTHING`,
+          [createdUser.id]
+        );
+      } catch (err) {
+        console.error('❌ Error initializing user_lifecycle for Google user:', err);
+        // Do not fail the entire registration; lifecycle can be initialized later if needed
+      }
+
       // Auto-add user to the common group
       try {
         const groupRes = await client.query('SELECT id FROM groups WHERE is_common = TRUE LIMIT 1');

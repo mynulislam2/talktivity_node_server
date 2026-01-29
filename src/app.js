@@ -45,7 +45,8 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes - Postman-aligned surface
-const { authRouter } = require('./modules/auth');
+const { authRouter, googleAuthRouter } = require('./modules/auth');
+const { adminRouter } = require('./modules/admin');
 const { dmsRouter } = require('./modules/dms');
 const { groupsRouter } = require('./modules/groups');
 const { subscriptionsRouter } = require('./modules/subscriptions');
@@ -66,6 +67,11 @@ const { router: aiRouter } = require('./modules/ai');
 
 // Mount routes - 54 core APIs
 app.use('/api/auth', authRouter);
+// Mount Google auth routes under the same /api/auth namespace
+// → /api/auth/google, /api/auth/google-token, /api/auth/refresh, /api/auth/auto-verify-emails
+app.use('/api/auth', googleAuthRouter);
+// Admin routes
+app.use('/api/admin', adminRouter);
 app.use('/api/dms', dmsRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/subscriptions', subscriptionsRouter);

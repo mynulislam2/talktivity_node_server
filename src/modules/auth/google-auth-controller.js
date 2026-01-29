@@ -46,12 +46,14 @@ async function handleGoogleOAuth(req, res) {
         accessToken,
         refreshToken,
         expiresIn,
-        token: accessToken, // Keep for backward compatibility
+        token: accessToken, // Backward compatibility
+        isNew,              // Let frontend know this was a new registration
         user: {
           id: user.id,
           email: user.email,
-          full_name: user.full_name,
-          profile_picture: user.profile_picture,
+          // Use camelCase to match frontend User type
+          fullName: user.full_name,
+          profilePicture: user.profile_picture,
         },
       },
     });
@@ -115,12 +117,13 @@ async function handleGoogleToken(req, res) {
         accessToken,
         refreshToken,
         expiresIn,
-        token: accessToken, // Keep for backward compatibility
+        token: accessToken, // Backward compatibility
+        isNew,              // Surface registration vs existing login
         user: {
           id: user.id,
           email: user.email,
-          full_name: user.full_name,
-          profile_picture: user.profile_picture,
+          fullName: user.full_name,
+          profilePicture: user.profile_picture,
         },
       },
     });
