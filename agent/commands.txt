@@ -1,0 +1,8 @@
+docker run -d \
+  --name livekit \
+  -p 7880:7880 \
+  -p 7881:7881 \
+  livekit/livekit-server:master \
+  --dev \
+  --bind 0.0.0.0
+
