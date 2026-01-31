@@ -1,0 +1,7 @@
+PGSSLMODE=require pg_dump \
+  --schema-only \
+  -h dpg-d24r71ali9vc73ejleog-a.singapore-postgres.render.com \
+  -U talktivity \
+  -d talktivity_postgres_sql_33av \
+  > schema.sql
+

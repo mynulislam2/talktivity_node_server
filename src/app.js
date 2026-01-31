@@ -8,8 +8,19 @@ const cors = require('cors');
 const config = require('./config');
 const errorHandler = require('./core/error/errorHandler');
 const { securityHeaders, sanitizeInput, globalLimiter } = require('./core/http/middlewares/security');
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./swagger");
 
 const app = express();
+
+
+
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Swagger docs on http://localhost:${PORT}/api-docs`);
+});
+
 
 // Middleware: Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -65,6 +76,9 @@ const { router: callRouter } = require('./modules/call');
 const { router: agentRouter } = require('./modules/agent');
 const { router: aiRouter } = require('./modules/ai');
 
+
+// Swagger docs route
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 // Mount routes - 54 core APIs
 app.use('/api/auth', authRouter);
 // Mount Google auth routes under the same /api/auth namespace
