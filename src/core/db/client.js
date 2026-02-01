@@ -13,6 +13,8 @@ class DBClient {
   async query(text, params = []) {
     const client = await this.pool.connect();
     try {
+      // Set query timeout to 60 seconds (prevents queries from hanging indefinitely)
+      await client.query('SET statement_timeout = 60000');
       return await client.query(text, params);
     } finally {
       client.release();
@@ -22,6 +24,8 @@ class DBClient {
   async transaction(callback) {
     const client = await this.pool.connect();
     try {
+      // Set query timeout for transaction (2 minutes for transactions)
+      await client.query('SET statement_timeout = 120000');
       await client.query('BEGIN');
       const result = await callback(client);
       await client.query('COMMIT');

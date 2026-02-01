@@ -11,7 +11,6 @@ const reportsController = require('./controller');
 router.get('/daily', authenticateToken, reportsController.getDailyReport);
 
 // POST /api/reports/daily/generate
-router.post('/daily/generate', authenticateToken, reportsController.generateDailyReport);
 
 // GET /api/reports/call - Get call report for all conversations
 router.get('/call', authenticateToken, reportsController.generateCallReport);

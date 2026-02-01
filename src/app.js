@@ -1,8 +1,3 @@
-/**
- * Express Application Setup
- * Configure middleware, routes, and error handling
- */
-
 const express = require('express');
 const cors = require('cors');
 const config = require('./config');

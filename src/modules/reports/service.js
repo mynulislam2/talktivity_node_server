@@ -196,7 +196,7 @@ const reportsService = {
   // ============ POSTMAN-ALIGNED METHODS ============
 
   /**
-   * Get or return cached daily report
+   * Get or return cached daily report, auto-generate if not found or invalid
    */
   async getDailyReport(userId, date) {
     const client = await db.pool.connect();
@@ -204,22 +204,37 @@ const reportsService = {
       // Normalize to YYYY-MM-DD string
       const reportDate = date || new Date().toISOString().split('T')[0];
 
+      // Try to fetch cached report
       const existingReport = await client.query(
         `SELECT * FROM daily_reports WHERE user_id = $1 AND report_date = $2`,
         [userId, reportDate]
       );
 
       if (existingReport.rows.length > 0) {
-        console.log(`📊 Returning cached daily report for user ${userId} on ${reportDate}`);
-        return {
-          report: existingReport.rows[0].report_data,
-          cached: true,
-          created_at: existingReport.rows[0].created_at,
-          updated_at: existingReport.rows[0].updated_at,
-        };
+        const reportData = existingReport.rows[0].report_data;
+        
+        // Validate cached report structure
+        if (reportData && 
+            typeof reportData === 'object' && 
+            reportData.fluency && 
+            reportData.vocabulary && 
+            reportData.grammar && 
+            reportData.discourse) {
+          console.log(`📊 Returning cached daily report for user ${userId} on ${reportDate}`);
+          return {
+            report: reportData,
+            cached: true,
+            created_at: existingReport.rows[0].created_at,
+            updated_at: existingReport.rows[0].updated_at,
+          };
+        }
+        // If cached report is invalid, fall through to generate
+        console.log(`⚠️  Cached report invalid, regenerating for user ${userId} on ${reportDate}`);
       }
 
-      throw new NotFoundError('No cached report found. Please generate a new report.');
+      // No valid cached report found - generate new one
+      console.log(`🔄 Generating daily report for user ${userId} on ${reportDate}`);
+      return await this.generateDailyReport(userId, reportDate);
     } finally {
       client.release();
     }
@@ -332,20 +347,23 @@ const reportsService = {
         throw new ValidationError(groqResponse.error || 'Failed to generate report');
       }
 
-      // Save the generated report to database
+      // Validate and structure the Groq response (same as call report)
+      const validatedReport = this.validateAndStructureReport(groqResponse.data);
+
+      // Save the validated report to database
       const saveResult = await client.query(
         `INSERT INTO daily_reports (user_id, report_date, report_data)
          VALUES ($1, $2, $3)
          ON CONFLICT (user_id, report_date) DO UPDATE 
          SET report_data = EXCLUDED.report_data, updated_at = NOW()
          RETURNING created_at, updated_at`,
-        [userId, reportDate, JSON.stringify(groqResponse.data)]
+        [userId, reportDate, JSON.stringify(validatedReport)]
       );
 
       console.log(`✅ Daily report saved for user ${userId} on ${reportDate}`);
 
       return {
-        report: groqResponse.data,
+        report: validatedReport,
         cached: false,
         created_at: saveResult.rows[0].created_at,
         updated_at: saveResult.rows[0].updated_at,

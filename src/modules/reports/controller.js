@@ -8,6 +8,7 @@ const { ValidationError, NotFoundError } = require('../../core/error/errors');
 const reportsController = {
   /**
    * GET /api/reports/daily?date=YYYY-MM-DD
+   * Service automatically fetches cached report or generates if not found
    */
   async getDailyReport(req, res) {
     try {
@@ -18,43 +19,15 @@ const reportsController = {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
       }
 
+      // Service automatically fetches or generates
       const result = await reportsService.getDailyReport(userId, date);
-
       return res.json({ success: true, data: result });
     } catch (error) {
-      if (error instanceof NotFoundError) {
-        // No cached report yet for this date — generate and return it
-        try {
-          const generated = await reportsService.generateDailyReport(userId, date);
-          return res.json({ success: true, data: generated });
-        } catch (genErr) {
-          return res.status(404).json({ success: false, error: error.message });
-        }
-      }
-      return res.status(500).json({ success: false, error: 'Unable to retrieve daily report' });
-    }
-  },
-
-  /**
-   * POST /api/reports/daily/generate
-   */
-  async generateDailyReport(req, res) {
-    try {
-      const userId = req.user?.userId;
-      const date = req.body?.progress_date || req.body?.date || req.query?.date || new Date().toISOString().split('T')[0];
-
-      if (!userId) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
-      }
-
-      const result = await reportsService.generateDailyReport(userId, date);
-
-      return res.json({ success: true, data: result });
-    } catch (error) {
-      if (error instanceof ValidationError) {
-        return res.status(400).json({ success: false, error: error.message });
-      }
-      return res.status(500).json({ success: false, error: 'Unable to generate daily report' });
+      console.error('[Reports] Error in getDailyReport:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message || 'Unable to retrieve daily report' 
+      });
     }
   },
 

@@ -10,7 +10,7 @@ const LLM_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_PRIMARY = 'openai/gpt-oss-120b';
 const MODEL_FALLBACK = 'openai/gpt-oss-120b';
 
-async function callGroq(prompt, messages) {
+async function callGroq(prompt, messages, timeout = 60000) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error('GROQ_API_KEY not configured');
@@ -31,7 +31,7 @@ async function callGroq(prompt, messages) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      timeout: 20000,
+      timeout: timeout,
     });
 
     const content = data?.choices?.[0]?.message?.content || '';
@@ -58,7 +58,7 @@ async function callGroq(prompt, messages) {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        timeout: 20000,
+        timeout: timeout,
       });
       const content = data?.choices?.[0]?.message?.content || '';
       return safeJson(content);
@@ -96,21 +96,21 @@ const llmService = {
     const messages = [
       { role: 'user', content: JSON.stringify({ utterances: userUtterances }) },
     ];
-    return await callGroq(reportPrompt, messages);
+    return await callGroq(reportPrompt, messages, 60000);
   },
 
   async evaluateQuizAnswers(answers) {
     const messages = [
       { role: 'user', content: JSON.stringify({ answers }) },
     ];
-    return await callGroq(quizEvaluationPrompt, messages);
+    return await callGroq(quizEvaluationPrompt, messages, 30000);
   },
 
   async evaluateListeningQuiz(answers) {
     const messages = [
       { role: 'user', content: JSON.stringify({ answers }) },
     ];
-    return await callGroq(listeningQuizPrompt, messages);
+    return await callGroq(listeningQuizPrompt, messages, 30000);
   },
 
   /**
@@ -178,7 +178,9 @@ const llmService = {
       const messages = [
         { role: 'user', content: JSON.stringify(payload) },
       ];
-      return await callGroq(promptConfig, messages);
+      // Use longer timeout for report tasks
+      const timeout = task === 'report' ? 60000 : 30000;
+      return await callGroq(promptConfig, messages, timeout);
     } else if (typeof promptConfig === 'object' && promptConfig.systemPrompt && promptConfig.userPrompt) {
       // New structure: system + user with placeholder injection
       const systemPrompt = promptConfig.systemPrompt;
@@ -212,7 +214,10 @@ const llmService = {
       const messages = [
         { role: 'user', content: userPrompt },
       ];
-      return await callGroq(systemPrompt, messages);
+      
+      // Use longer timeout for dailyReport (60 seconds) as it processes more data
+      const timeout = task === 'dailyReport' ? 60000 : 30000;
+      return await callGroq(systemPrompt, messages, timeout);
     } else {
       throw new Error(`Invalid prompt configuration for task: ${task}`);
     }
