@@ -97,45 +97,50 @@ const topicsService = {
 
     const isBasicOrFreeTrial = !subscription || subscription.plan_type === 'Basic' || subscription.plan_type === 'FreeTrial';
 
-    // 2. Always use "Custom Category" for user-created topics (ignore categoryName parameter)
-    const CUSTOM_CATEGORY_NAME = 'Custom Category';
-    
-    // 3. Get Custom Category (it should exist, but create if missing)
+    // NOTE: Legacy behavior used a global "Custom Category". Role-play scenarios are now stored
+    // in a dedicated per-user table (roleplay_sessions) via /api/roleplays.
+    // Prevent recreating/using "Custom Category" via this endpoint.
+    if (categoryName === 'Custom Category') {
+      const err = new Error('Custom Category is deprecated. Use /api/roleplays for role-play scenarios.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 2. Get the requested category (create if missing)
     let category = await db.queryOne(
       `SELECT id, category_name, topics, created_at, updated_at
        FROM topic_categories
        WHERE category_name = $1
        LIMIT 1`,
-      [CUSTOM_CATEGORY_NAME]
+      [categoryName]
     );
 
     if (!category) {
-      // Create Custom Category if it doesn't exist (shouldn't happen, but safety check)
+      // Create category if it doesn't exist (safety check)
       const newCategory = await db.queryOne(
         `INSERT INTO topic_categories (category_name, topics, created_at, updated_at)
          VALUES ($1, $2, NOW(), NOW())
          RETURNING id, category_name, topics, created_at, updated_at`,
-        [CUSTOM_CATEGORY_NAME, JSON.stringify([])]
+        [categoryName, JSON.stringify([])]
       );
       category = newCategory;
     }
 
-    // 4. Count existing custom topics for Basic/FreeTrial users (only for this user)
-    // Since all custom topics are now in Custom Category, we only need to check this one category
+    // 3. Count existing topics for Basic/FreeTrial users (only for this user)
     if (isBasicOrFreeTrial) {
       const topics = category.topics || [];
-      // Count topics that are custom AND created by this user
-      const customTopics = topics.filter(t => 
+      // Count topics created by this user
+      const userTopics = topics.filter(t =>
         (t.created_by === userId || t.userId === userId)
       );
 
-      // 5. Enforce plan limits (Basic/FreeTrial: max 5 total, Pro: unlimited)
-      if (customTopics.length >= 5) {
-        throw new Error('Maximum custom topics limit reached (5 topics). Upgrade to Pro for unlimited topics.');
+      // 4. Enforce plan limits (Basic/FreeTrial: max 5 per category, Pro: unlimited)
+      if (userTopics.length >= 5) {
+        throw new Error('Maximum topics limit reached for this category (5). Upgrade to Pro for unlimited.');
       }
     }
 
-    // 6. Add topic to Custom Category's topics array
+    // 5. Add topic to category's topics array
     const topics = category.topics || [];
     
     // Ensure topic has required fields (including userId for tracking)
@@ -164,7 +169,7 @@ const topicsService = {
     return {
       ...newTopic,
       categoryId: updatedCategory.id,
-      categoryName: updatedCategory.category_name, // Will always be "Custom Category"
+      categoryName: updatedCategory.category_name,
     };
   },
 };
