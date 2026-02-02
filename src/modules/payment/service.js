@@ -11,6 +11,7 @@
 
 const db = require('../../core/db/client');
 const { ValidationError, NotFoundError } = require('../../core/error/errors');
+const discountTokenService = require('../discount-tokens/service');
 let Payment;
 try {
   ({ Payment } = require('aamarpay.v2'));
@@ -146,19 +147,57 @@ const paymentService = {
       throw new Error('AamarPay not configured');
     }
 
+    // Determine actual plan type (may be overridden by discount token)
+    let actualPlanType = planType;
+    let tokenId = null;
+    let originalAmount = null;
+    let discountAmount = 0;
+
+    // Validate and apply discount token if provided
+    if (payload.discountToken) {
+      try {
+        const token = await discountTokenService.validateToken(payload.discountToken, userId, planType);
+        
+        // If token is plan-specific, use that plan type
+        if (token.plan_type) {
+          actualPlanType = token.plan_type;
+        }
+
+        tokenId = token.id;
+      } catch (error) {
+        throw new ValidationError(error.message || 'Invalid discount token');
+      }
+    }
+
     const plan = await db.queryOne(
       `SELECT * FROM subscription_plans WHERE plan_type = $1 AND is_active = true ORDER BY id DESC LIMIT 1`,
-      [planType]
+      [actualPlanType]
     );
     if (!plan) {
-      throw new Error(`Plan type "${planType}" not found`);
+      throw new Error(`Plan type "${actualPlanType}" not found`);
     }
 
     const tranId = `TALK_${userId}_${Date.now()}`;
-    const amount = parseFloat(payload.amount || plan.price_usd || 0);
+    originalAmount = parseFloat(payload.amount || plan.price_usd || plan.price || 0);
     const currency = payload.currency || 'BDT';
 
+    // Apply discount if token is valid
+    let finalAmount = originalAmount;
+    if (tokenId) {
+      const token = await db.queryOne('SELECT * FROM discount_tokens WHERE id = $1', [tokenId]);
+      if (token) {
+        // Convert to number (PostgreSQL DECIMAL returns as string)
+        const discountResult = discountTokenService.applyDiscount(
+          originalAmount, 
+          parseFloat(token.discount_percent)
+        );
+        finalAmount = discountResult.discountedPrice;
+        discountAmount = discountResult.discountAmount;
+      }
+    }
+
     // Create pending records in a transaction
+    let subscriptionId;
     await db.transaction(async (client) => {
       const subRes = await client.query(
         `INSERT INTO subscriptions (user_id, plan_id, status, payment_id, created_at, updated_at)
@@ -166,24 +205,25 @@ const paymentService = {
          RETURNING id`,
         [userId, plan.id, tranId]
       );
-      const subscriptionId = subRes.rows[0].id;
+      subscriptionId = subRes.rows[0].id;
 
       await client.query(
-        `INSERT INTO payment_transactions (user_id, subscription_id, transaction_id, order_id, amount, currency, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        [userId, subscriptionId, tranId, tranId, amount, currency]
+        `INSERT INTO payment_transactions 
+         (user_id, subscription_id, transaction_id, order_id, amount, currency, status, discount_token_id, original_amount, discount_amount, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [userId, subscriptionId, tranId, tranId, finalAmount, currency, tokenId, originalAmount, discountAmount]
       );
     });
 
     const pay = new Payment(AAMARPAY_STORE_ID, AAMARPAY_SIGNATURE_KEY, AAMARPAY_SANDBOX);
     const paymentData = {
       data: {
-        amount: String(amount || '0'),
+        amount: String(finalAmount || '0'),
         currency,
         cus_email: payload.cus_email || 'user@example.com',
         cus_name: payload.cus_name || 'Talktivity User',
         cus_phone: payload.cus_phone || '01XXXXXXXX',
-        desc: payload.desc || `Talktivity ${planType} Plan Subscription`,
+        desc: payload.desc || `Talktivity ${actualPlanType} Plan Subscription`,
         tran_id: tranId,
         cus_add1: payload.cus_add1 || 'N/A',
       },
@@ -193,7 +233,13 @@ const paymentService = {
     };
 
     const paymentUrl = await pay.init(paymentData);
-    return { payment_url: paymentUrl, order_id: tranId };
+    return { 
+      payment_url: paymentUrl, 
+      order_id: tranId,
+      original_amount: originalAmount,
+      discount_amount: discountAmount,
+      final_amount: finalAmount
+    };
   },
 
   /**
@@ -258,6 +304,39 @@ const paymentService = {
              WHERE id = $4`,
             [startDate, endDate, orderId, paymentResult.subscription_id]
           );
+
+          // Record discount token usage if token was used
+          if (paymentResult.discount_token_id && paymentResult.original_amount && paymentResult.discount_amount) {
+            try {
+              await discountTokenService.recordTokenUsage(
+                paymentResult.discount_token_id,
+                paymentResult.user_id,
+                paymentResult.subscription_id,
+                parseFloat(paymentResult.discount_amount),
+                parseFloat(paymentResult.original_amount)
+              );
+
+              // Check if max_users limit is reached after recording usage
+              const token = await db.queryOne(
+                'SELECT max_users FROM discount_tokens WHERE id = $1',
+                [paymentResult.discount_token_id]
+              );
+
+              if (token && token.max_users !== null) {
+                const uniqueUserCount = await discountTokenService.getTokenUniqueUserCount(paymentResult.discount_token_id);
+                if (uniqueUserCount >= token.max_users) {
+                  // Auto-deactivate token when max_users limit is reached
+                  await client.query(
+                    'UPDATE discount_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                    [paymentResult.discount_token_id]
+                  );
+                }
+              }
+            } catch (error) {
+              // Log error but don't fail the payment
+              console.error('Error recording discount token usage:', error);
+            }
+          }
         } else if (outcome === 'fail') {
           await client.query(
             `UPDATE subscriptions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,

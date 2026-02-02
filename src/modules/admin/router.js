@@ -14,4 +14,10 @@ router.post('/users/bulk-delete', authenticateToken, requireAdmin, adminControll
 router.get('/verify-admin', authenticateToken, requireAdmin, adminController.verifyAdmin);
 router.get('/check-admin-status', authenticateToken, adminController.checkAdminStatus);
 
+// Discount Token Routes
+router.post('/discount-tokens', authenticateToken, requireAdmin, adminController.createDiscountToken);
+router.get('/discount-tokens', authenticateToken, requireAdmin, adminController.getDiscountTokens);
+router.put('/discount-tokens/:id', authenticateToken, requireAdmin, adminController.updateDiscountToken);
+router.delete('/discount-tokens/:id', authenticateToken, requireAdmin, adminController.deleteDiscountToken);
+
 module.exports = router;

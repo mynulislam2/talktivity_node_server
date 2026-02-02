@@ -59,7 +59,7 @@ const paymentController = {
   async createAamarPayPayment(req, res, next) {
     try {
       const userId = req.user?.userId;
-      const { planType, amount, currency, desc, cus_email, cus_name, cus_phone, cus_add1 } = req.body;
+      const { planType, amount, currency, desc, cus_email, cus_name, cus_phone, cus_add1, discountToken } = req.body;
 
       if (!userId) {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -79,6 +79,7 @@ const paymentController = {
         cus_name,
         cus_phone,
         cus_add1,
+        discountToken: discountToken || null, // Pass discount token if provided
         cancel_url: `${baseUrl}/api/payment-cancel-redirect`,
         fail_url: `${baseUrl}/api/payment-failed-redirect`,
         success_url: `${baseUrl}/api/payment-success-redirect`,
