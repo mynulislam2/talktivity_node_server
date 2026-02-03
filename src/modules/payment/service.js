@@ -246,11 +246,23 @@ const paymentService = {
    * AamarPay: Process success/fail/cancel callbacks
    */
   async processAamarPayResult(aamarpayResponse, outcome) {
-    const orderId = aamarpayResponse.mer_txnid || aamarpayResponse.order_id || aamarpayResponse.tran_id;
-    if (!orderId) throw new Error('Order ID not found in response');
+    const rawOrderId =
+      aamarpayResponse.mer_txnid ||
+      aamarpayResponse.order_id ||
+      aamarpayResponse.tran_id;
 
-    const paymentResult = await db.queryOne(
-      `SELECT pt.*, s.id as subscription_id, s.plan_id, sp.duration_days, sp.billing_cycle_days
+    if (!rawOrderId) {
+      console.error('AamarPay callback missing orderId-like field', {
+        outcome,
+        keys: Object.keys(aamarpayResponse || {}),
+      });
+      throw new Error('Order ID not found in response');
+    }
+
+    const orderId = String(rawOrderId);
+
+    let paymentResult = await db.queryOne(
+      `SELECT pt.*, s.id as subscription_id, s.plan_id, sp.duration_days
        FROM payment_transactions pt
        LEFT JOIN subscriptions s ON pt.subscription_id = s.id
        LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
@@ -260,11 +272,70 @@ const paymentService = {
       [orderId]
     );
 
+    if (!paymentResult && aamarpayResponse.tran_id) {
+      const tranId = String(aamarpayResponse.tran_id);
+      paymentResult = await db.queryOne(
+        `SELECT pt.*, s.id as subscription_id, s.plan_id, sp.duration_days
+         FROM payment_transactions pt
+         LEFT JOIN subscriptions s ON pt.subscription_id = s.id
+         LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+         WHERE pt.transaction_id = $1
+         ORDER BY pt.created_at DESC
+         LIMIT 1`,
+        [tranId]
+      );
+    }
+
     if (!paymentResult) {
+      console.error('AamarPay callback: payment transaction not found', {
+        outcome,
+        orderId,
+        keys: Object.keys(aamarpayResponse || {}),
+        pg_txnid: aamarpayResponse?.pg_txnid,
+        epw_txnid: aamarpayResponse?.epw_txnid,
+        tran_id: aamarpayResponse?.tran_id,
+        mer_txnid: aamarpayResponse?.mer_txnid,
+      });
       throw new Error('Payment transaction not found');
     }
 
-    const transactionId = aamarpayResponse.pg_txnid || aamarpayResponse.epw_txnid || paymentResult.transaction_id;
+    // Finalize core payment + subscription changes inside a single transaction
+    await this.finalizeAamarPayTransaction(paymentResult, aamarpayResponse, outcome, orderId);
+
+    // Record discount token usage outside the main transaction so lock/timeout
+    // issues on discount tables never roll back the payment/subscription updates.
+    if (outcome === 'success') {
+      await this.recordAamarPayDiscountUsage(paymentResult);
+    }
+
+    // On success, also mark upgrade as completed in lifecycle
+    if (outcome === 'success' && paymentResult.user_id) {
+      try {
+        const lifecycleService = require('../user-lifecycle/service');
+        await lifecycleService.updateLifecycleState(paymentResult.user_id, { upgrade_completed: true });
+      } catch (e) {
+        // Log and continue; subscription is already active
+        console.error(
+          'Error updating lifecycle upgrade_completed for AamarPay success',
+          { userId: paymentResult.user_id, orderId },
+          e
+        );
+      }
+    }
+
+    return { success: true, order_id: orderId, outcome };
+  },
+
+  /**
+   * Internal helper to finalize an AamarPay transaction:
+   * - updates payment_transactions
+   * - updates subscriptions
+   */
+  async finalizeAamarPayTransaction(paymentResult, aamarpayResponse, outcome, orderId) {
+    const transactionId =
+      aamarpayResponse.pg_txnid ||
+      aamarpayResponse.epw_txnid ||
+      paymentResult.transaction_id;
     const method = aamarpayResponse.card_type || 'aamarPay';
     const gatewayResp = JSON.stringify(aamarpayResponse);
 
@@ -280,7 +351,7 @@ const paymentService = {
          WHERE id = $5`,
         [
           transactionId,
-          outcome === 'success' ? 'success' : outcome === 'fail' ? 'failed' : 'cancelled',
+          outcome === 'success' ? 'completed' : outcome === 'fail' ? 'failed' : 'cancelled',
           method,
           gatewayResp,
           paymentResult.id,
@@ -290,7 +361,7 @@ const paymentService = {
       if (paymentResult.subscription_id) {
         if (outcome === 'success') {
           const startDate = new Date();
-          const days = paymentResult.duration_days || paymentResult.billing_cycle_days || 60;
+          const days = paymentResult.duration_days || 60;
           const endDate = new Date(startDate);
           endDate.setDate(startDate.getDate() + days);
 
@@ -305,38 +376,6 @@ const paymentService = {
             [startDate, endDate, orderId, paymentResult.subscription_id]
           );
 
-          // Record discount token usage if token was used
-          if (paymentResult.discount_token_id && paymentResult.original_amount && paymentResult.discount_amount) {
-            try {
-              await discountTokenService.recordTokenUsage(
-                paymentResult.discount_token_id,
-                paymentResult.user_id,
-                paymentResult.subscription_id,
-                parseFloat(paymentResult.discount_amount),
-                parseFloat(paymentResult.original_amount)
-              );
-
-              // Check if max_users limit is reached after recording usage
-              const token = await db.queryOne(
-                'SELECT max_users FROM discount_tokens WHERE id = $1',
-                [paymentResult.discount_token_id]
-              );
-
-              if (token && token.max_users !== null) {
-                const uniqueUserCount = await discountTokenService.getTokenUniqueUserCount(paymentResult.discount_token_id);
-                if (uniqueUserCount >= token.max_users) {
-                  // Auto-deactivate token when max_users limit is reached
-                  await client.query(
-                    'UPDATE discount_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
-                    [paymentResult.discount_token_id]
-                  );
-                }
-              }
-            } catch (error) {
-              // Log error but don't fail the payment
-              console.error('Error recording discount token usage:', error);
-            }
-          }
         } else if (outcome === 'fail') {
           await client.query(
             `UPDATE subscriptions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
@@ -348,21 +387,55 @@ const paymentService = {
             [paymentResult.subscription_id]
           );
         }
+      } else {
+        console.warn('AamarPay callback without subscription_id on payment', {
+          outcome,
+          orderId,
+          userId: paymentResult.user_id,
+          paymentId: paymentResult.id,
+        });
       }
     });
+  },
 
-    // On success, also mark upgrade as completed in lifecycle
-    if (outcome === 'success' && paymentResult.user_id) {
-      try {
-        const lifecycleService = require('../user-lifecycle/service');
-        await lifecycleService.updateLifecycleState(paymentResult.user_id, { upgrade_completed: true });
-      } catch (e) {
-        // Log and continue; subscription is already active
-        console.error('Error updating lifecycle upgrade_completed for AamarPay success:', e);
-      }
+  /**
+   * Record discount token usage after payment is finalized.
+   * Runs outside the main payment transaction so failures/timeouts
+   * here never roll back the core payment/subscription updates.
+   */
+  async recordAamarPayDiscountUsage(paymentResult) {
+    if (!paymentResult.discount_token_id || !paymentResult.original_amount || !paymentResult.discount_amount) {
+      return;
     }
 
-    return { success: true, order_id: orderId, outcome };
+    try {
+      await discountTokenService.recordTokenUsage(
+        paymentResult.discount_token_id,
+        paymentResult.user_id,
+        paymentResult.subscription_id,
+        parseFloat(paymentResult.discount_amount),
+        parseFloat(paymentResult.original_amount)
+      );
+
+      // Check if max_users limit is reached after recording usage
+      const token = await db.queryOne(
+        'SELECT max_users FROM discount_tokens WHERE id = $1',
+        [paymentResult.discount_token_id]
+      );
+
+      if (token && token.max_users !== null) {
+        const uniqueUserCount = await discountTokenService.getTokenUniqueUserCount(paymentResult.discount_token_id);
+        if (uniqueUserCount >= token.max_users) {
+          await db.queryOne(
+            'UPDATE discount_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+            [paymentResult.discount_token_id]
+          );
+        }
+      }
+    } catch (error) {
+      // Log but never fail the payment flow
+      console.error('Error recording discount token usage:', error);
+    }
   },
 };
 
