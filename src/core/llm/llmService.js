@@ -50,7 +50,7 @@ async function callGroq(prompt, messages, timeout = 60000) {
       }
     };
     console.error('[LLM Service] Groq API Error:', JSON.stringify(errorDetails, null, 2));
-    
+
     // Fallback attempt
     try {
       const { data } = await axios.post(LLM_API_URL, { ...payload, model: MODEL_FALLBACK }, {
@@ -85,7 +85,7 @@ function safeJson(text) {
     const end = cleaned.lastIndexOf('}');
     if (start !== -1 && end !== -1) {
       const snippet = cleaned.slice(start, end + 1);
-      try { return JSON.parse(snippet); } catch {}
+      try { return JSON.parse(snippet); } catch { }
     }
     throw new Error('LLM did not return valid JSON');
   }
@@ -185,36 +185,36 @@ const llmService = {
       // New structure: system + user with placeholder injection
       const systemPrompt = promptConfig.systemPrompt;
       const userPromptTemplate = promptConfig.userPrompt;
-      
+
       // Inject transcript/payload into user prompt
       let userPrompt = userPromptTemplate.replace('{TRANSCRIPT_PLACEHOLDER}', JSON.stringify(payload));
-      
+
       // For dailyReport, the payload is { transcript: [...] }, so we inject just the array
       if (task === 'dailyReport' && payload.transcript) {
         // Validate transcript is an array
         if (!Array.isArray(payload.transcript)) {
           throw new Error(`Invalid transcript format: expected array, got ${typeof payload.transcript}`);
         }
-        
+
         // Log transcript info for debugging
         console.log(`[LLM Service] Processing ${payload.transcript.length} transcript items for dailyReport`);
-        
+
         // Stringify the transcript array
         const transcriptJson = JSON.stringify(payload.transcript);
         const transcriptSize = transcriptJson.length;
-        
+
         // Check if transcript is too large (Groq has limits)
         if (transcriptSize > 100000) { // ~100KB
           console.warn(`[LLM Service] Large transcript detected: ${transcriptSize} bytes`);
         }
-        
+
         userPrompt = userPromptTemplate.replace('{TRANSCRIPT_PLACEHOLDER}', transcriptJson);
       }
 
       const messages = [
         { role: 'user', content: userPrompt },
       ];
-      
+
       // Use longer timeout for dailyReport (60 seconds) as it processes more data
       const timeout = task === 'dailyReport' ? 60000 : 30000;
       return await callGroq(systemPrompt, messages, timeout);
@@ -233,8 +233,12 @@ const llmService = {
     return await this.run('listeningQuizGenerate', payload);
   },
 
-  async generateCoursePlan(onboardingData, conversations) {
-    const payload = { onboarding: onboardingData, conversations };
+  async generateCoursePlan(onboardingData, conversations, excludedTopics = []) {
+    const payload = { 
+      onboarding: onboardingData, 
+      conversations,
+      excludedTopics: excludedTopics.length > 0 ? excludedTopics : undefined,
+    };
     // Returns JSON array of 7 topic objects
     return await this.run('courseGenerate', payload);
   },

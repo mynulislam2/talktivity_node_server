@@ -10,7 +10,7 @@ const llmService = require('../../core/llm/llmService');
 const listeningTopics = require('../../../listening-topics');
 const { NotFoundError, ValidationError } = require('../../core/error/errors');
 const { calculateXP, calculateLevel } = require('../../../utils/xpCalc');
-const { getUtcToday } = require('../../utils/timezone');
+const { getUtcToday, toUtcMidnight, calculateCourseProgress } = require('../../utils/timezone');
 
 const coursesService = {
   /**
@@ -207,7 +207,7 @@ const coursesService = {
       // Calculate current week and day (normalize dates to avoid timezone issues)
       // today is already declared above as YYYY-MM-DD string
       const todayStr = today; // Reuse the existing today variable
-      
+
       let courseStartStr;
       if (typeof course.course_start_date === 'string') {
         courseStartStr = course.course_start_date.split('T')[0];
@@ -216,11 +216,11 @@ const coursesService = {
       } else {
         courseStartStr = String(course.course_start_date).split('T')[0];
       }
-      
+
       // Parse dates as UTC midnight to avoid timezone issues
       const courseStart = new Date(courseStartStr + 'T00:00:00.000Z');
       const todayDate = new Date(todayStr + 'T00:00:00.000Z');
-      
+
       const daysSinceStart = Math.max(
         0,
         Math.round((todayDate - courseStart) / (1000 * 60 * 60 * 24))
@@ -347,7 +347,7 @@ const coursesService = {
       } else {
         todayISO = getUtcToday();
       }
-      
+
       // Normalize course start date to UTC midnight for accurate comparison
       let courseStartStr;
       if (typeof course.course_start_date === 'string') {
@@ -357,7 +357,7 @@ const coursesService = {
       } else {
         courseStartStr = String(course.course_start_date).split('T')[0];
       }
-      
+
       // We'll determine currentWeek and currentDay by finding which timeline day matches todayISO
       // Initialize to defaults (will be set when we find the matching day)
       let currentWeek = 1;
@@ -414,7 +414,7 @@ const coursesService = {
         // Determine if this is the current day by matching the date
         const isCurrentDay = dateISO === todayISO;
         const isPast = dateISO < todayISO;
-        
+
         // If this is the current day, set currentWeek and currentDay
         if (isCurrentDay) {
           currentWeek = week;
@@ -475,9 +475,11 @@ const coursesService = {
 
   /**
    * Generate personalized course using Groq AI
+   * @param {object} onboardingData - User onboarding preferences
+   * @param {array} conversations - Recent transcripts for context
+   * @param {array} excludedTopics - Topic titles to NOT generate (already completed)
    */
-  async generatePersonalizedCourse(onboardingData, conversations) {
-    // Use centralized LLM service with courseGenerationPrompt
+  async generatePersonalizedCourse(onboardingData, conversations, excludedTopics = []) {
     const contextOnboarding = {
       skill_to_improve: onboardingData.skill_to_improve,
       current_level: onboardingData.current_level,
@@ -494,7 +496,7 @@ const coursesService = {
       tutor_style: onboardingData.tutor_style,
     };
 
-    const topics = await llmService.generateCoursePlan(contextOnboarding, conversations);
+    const topics = await llmService.generateCoursePlan(contextOnboarding, conversations, excludedTopics);
     if (!Array.isArray(topics) || topics.length !== 7) {
       throw new ValidationError('AI did not return a valid 7-topic course plan');
     }
@@ -513,13 +515,10 @@ const coursesService = {
 
     const course = courseResult;
 
-    // Calculate current week and day using UTC
-    const courseStart = new Date(course.course_start_date);
-    const todayUTC = new Date(getUtcToday() + 'T00:00:00.000Z');
-    const courseStartUTC = new Date(courseStart.toISOString().split('T')[0] + 'T00:00:00.000Z');
-    const daysSinceStart = Math.floor((todayUTC - courseStartUTC) / (1000 * 60 * 60 * 24));
-    const currentWeek = Math.floor(daysSinceStart / 7) + 1;
-    const currentDay = (daysSinceStart % 7) + 1;
+    // Calculate current week and day using UTC helper (consistent, no timezone issues)
+    const { week: currentWeek, day: currentDay } = calculateCourseProgress(
+      course.course_start_date
+    );
 
     const TOTAL_COURSE_WEEKS = 12;
     const isFirstDayOfNewWeek = currentDay === 1 && currentWeek > 1;
@@ -545,7 +544,7 @@ const coursesService = {
       message: 'No batch action needed at this time',
       currentWeek,
       currentDay,
-      nextBatchTriggerDay: (7 - currentDay) + 1, // Days until next week
+      nextBatchTriggerDay: (7 - currentDay) + 1,
     };
   },
 
@@ -566,7 +565,8 @@ const coursesService = {
   },
 
   /**
-   * Generate next batch of 7 topics (called when first day of new week)
+   * Generate next batch of 7 topics (called on first day of new week)
+   * Filters out completed topics to avoid duplicates
    */
   async generateNextBatch(userId) {
     const client = await db.pool.connect();
@@ -584,8 +584,15 @@ const coursesService = {
       const course = courseResult.rows[0];
       const currentTopics = course.personalized_topics || [];
 
-      // Get onboarding data from onboarding_data table (single source of truth)
-      // Only select the 15 fields we actually use (exclude legacy fields)
+      // Extract completed topic titles to avoid duplicates
+      const completedTopicTitles = currentTopics.map(t => t.title);
+      console.log(
+        `[Batch] User has ${completedTopicTitles.length} completed topics:`,
+        completedTopicTitles.slice(0, 5).join(', ') + 
+        (completedTopicTitles.length > 5 ? '...' : '')
+      );
+
+      // Get onboarding data
       const onboardingResult = await client.query(
         `SELECT 
           id, user_id, skill_to_improve, language_statement,
@@ -612,23 +619,93 @@ const coursesService = {
 
       const conversations = conversationResult.rows.map(row => row.transcript);
 
-      // Generate next batch
+      // Generate next batch with excluded topics
       let newTopics = [];
       try {
-        newTopics = await this.generatePersonalizedCourse(onboardingData, conversations);
-        console.log('Next batch generated with', newTopics.length, 'topics');
+        newTopics = await this.generatePersonalizedCourse(
+          onboardingData, 
+          conversations,
+          completedTopicTitles
+        );
+        console.log('Next batch generated with', newTopics.length, 'new topics');
       } catch (error) {
         console.error('Error generating next batch:', error);
-        throw new ValidationError('Failed to generate next batch');
+        throw new ValidationError(`Failed to generate next batch: ${error.message}`);
       }
 
-      // Append new topics
+      // Validate LLM response before storing
+      if (!Array.isArray(newTopics)) {
+        throw new ValidationError(
+          `Expected array of topics, got ${typeof newTopics}`
+        );
+      }
+
+      if (newTopics.length === 0) {
+        throw new ValidationError('LLM returned empty array');
+      }
+
+      if (newTopics.length !== 7) {
+        console.warn(
+          `[Batch] Warning: LLM returned ${newTopics.length} topics (expected 7)`
+        );
+        if (newTopics.length < 3) {
+          throw new ValidationError(
+            `Too few topics: ${newTopics.length} (minimum 3 required)`
+          );
+        }
+      }
+
+      // Validate each topic has required fields
+      const requiredFields = ['id', 'title', 'prompt', 'firstPrompt'];
+      const newTopicTitles = [];
+
+      for (let i = 0; i < newTopics.length; i++) {
+        const topic = newTopics[i];
+
+        if (!topic || typeof topic !== 'object') {
+          throw new ValidationError(`Topic ${i + 1} is not a valid object`);
+        }
+
+        for (const field of requiredFields) {
+          if (!topic[field]) {
+            throw new ValidationError(
+              `Topic ${i + 1} missing required field: "${field}"`
+            );
+          }
+          if (typeof topic[field] !== 'string') {
+            throw new ValidationError(
+              `Topic ${i + 1} field "${field}" must be string, got ${typeof topic[field]}`
+            );
+          }
+          if (topic[field].trim().length === 0) {
+            throw new ValidationError(
+              `Topic ${i + 1} field "${field}" is empty`
+            );
+          }
+        }
+
+        newTopicTitles.push(topic.title);
+
+        // Warn if LLM generated duplicate
+        if (completedTopicTitles.includes(topic.title)) {
+          console.warn(
+            `[Batch] ⚠️  Topic "${topic.title}" already completed (possible LLM duplicate)`
+          );
+        }
+      }
+
+      console.log('✅ Batch validation passed. New topics:', newTopicTitles.join(', '));
+
+      // All validations passed, safe to store
       const allTopics = [...currentTopics, ...newTopics];
 
-      // Update course
       await client.query(
         'UPDATE user_courses SET personalized_topics = $1 WHERE id = $2',
         [JSON.stringify(allTopics), course.id]
+      );
+
+      console.log(
+        `✅ Batch generation successful. Total topics: ${allTopics.length}`
       );
 
       return {
@@ -636,6 +713,7 @@ const coursesService = {
         message: 'Next batch generated successfully',
         newTopicsCount: newTopics.length,
         totalTopicsCount: allTopics.length,
+        newTopics: newTopicTitles,
       };
     } finally {
       client.release();

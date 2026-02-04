@@ -24,7 +24,7 @@ from services import setup_logging, get_logger, emit_session_save_failed
 from utils.timezone import get_utc_now
 from .session_manager import SessionManager
 from .handlers import LLMErrorHandler, TimeCheckHandler, TranscriptSaveHandler
-
+from .first_line import generate_first_line
 # Load environment variables first
 load_environment()
 
@@ -152,9 +152,14 @@ async def entrypoint(ctx: JobContext):
         room=ctx.room,
     )
 
-    # Say initial greeting
+    # Say initial greeting (LLM-generated first line)
     try:
-        await session.say("Hi! how are you doing!")
+        first_line = await generate_first_line(
+            api_key=config.google.api_key,
+            session_type=session_type,   # "call" | "practice" | "roleplay" from metadata
+            custom_prompt=custom_prompt, # enriched with profile earlier
+        )
+        await session.say(first_line)
     except Exception as e:
         logger.warning("Could not say initial greeting: %s", e)
 
