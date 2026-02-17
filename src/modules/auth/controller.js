@@ -11,11 +11,11 @@ const authController = {
     try {
       const { email, password, fullName } = req.body;
 
-      if (!email || !password || !fullName) {
-        throw new ValidationError('Email, password, and fullName are required');
+      if (!email || !password) {
+        throw new ValidationError('Email and password are required');
       }
 
-      const result = await authService.register({ email, password, fullName });
+      const result = await authService.register({ email, password, fullName: fullName || null });
       sendSuccess(res, result, 201, 'Registration successful');
     } catch (error) {
       next(error);

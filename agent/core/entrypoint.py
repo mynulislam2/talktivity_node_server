@@ -141,6 +141,7 @@ async def entrypoint(ctx: JobContext):
     transcript_handler = TranscriptSaveHandler(
         session, ctx, db_pool, config, session_info, participant
     )
+    # Register as a shutdown callback (safety net)
     ctx.add_shutdown_callback(transcript_handler.save_transcript)
 
     # Create the agent with custom prompts
@@ -177,6 +178,15 @@ async def entrypoint(ctx: JobContext):
                     participant.identity,
                 )
                 session_info["session_disconnected"] = True
+
+                # Proactively start transcript save as soon as participant leaves,
+                # instead of waiting for full worker shutdown. This reduces the
+                # chance of hitting 'Executor shutdown has been called' while
+                # saving the conversation.
+                try:
+                    asyncio.create_task(transcript_handler.save_transcript())
+                except Exception as e:
+                    logger.error("Error scheduling transcript save on disconnect: %s", e)
 
         # Clean up time check task when session ends
         ctx.add_shutdown_callback(time_check_handler.stop)

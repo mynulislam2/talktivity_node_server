@@ -6,6 +6,7 @@
 
 const db = require('../../core/db/client');
 const { NotFoundError, ValidationError } = require('../../core/error/errors');
+const { getUtcToday, calculateCourseProgress } = require('../../utils/timezone');
 
 const vocabularyService = {
   /**
@@ -24,12 +25,19 @@ const vocabularyService = {
       throw new NotFoundError('No active course found. Please initialize your course first.');
     }
 
-    // Calculate current week and day from course start date
-    const courseStart = new Date(course.course_start_date);
-    const today = new Date();
-    const daysSinceStart = Math.floor((today - courseStart) / (1000 * 60 * 60 * 24));
-    const currentWeek = Math.floor(daysSinceStart / 7) + 1;
-    const currentDay = (daysSinceStart % 7) + 1;
+    // Calculate current week and day from course start date (using UTC to match other services)
+    // Normalize course_start_date to YYYY-MM-DD string to avoid timezone issues
+    let courseStartStr;
+    if (typeof course.course_start_date === 'string') {
+      courseStartStr = course.course_start_date.split('T')[0];
+    } else if (course.course_start_date instanceof Date) {
+      courseStartStr = course.course_start_date.toISOString().split('T')[0];
+    } else {
+      courseStartStr = String(course.course_start_date).split('T')[0];
+    }
+
+    // Use the same UTC-based calculation as courses/service.js
+    const { week: currentWeek, day: currentDay } = calculateCourseProgress(courseStartStr);
 
     return {
       courseId: course.id,
@@ -136,6 +144,7 @@ const vocabularyService = {
     const today = new Date().toISOString().split('T')[0];
 
     // Insert completion with course_id (tied to specific course)
+    // Uses ON CONFLICT to handle duplicate attempts gracefully
     return await db.queryOne(
       `INSERT INTO vocabulary_completions 
        (user_id, course_id, week_number, day_number, completed_date, created_at, updated_at)

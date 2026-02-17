@@ -67,7 +67,7 @@ const lifecycleService = {
         'current_level', 'native_language', 'known_words_1', 'known_words_2',
         'interests', 'english_style', 'tutor_style'
       ];
-      
+
       fieldsToCheck.forEach(field => {
         const value = onboarding[field];
         if (Array.isArray(value)) {

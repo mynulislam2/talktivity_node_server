@@ -38,7 +38,7 @@ Return only a valid JSON object with "prompt" and "firstPrompt" fields.`;
           { role: 'user', content: userMessage },
         ],
         temperature: 0.7,
-        max_tokens: 1000,
+        max_tokens: 100000,
         response_format: { type: 'json_object' },
       };
 

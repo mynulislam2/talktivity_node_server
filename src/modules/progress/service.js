@@ -5,7 +5,7 @@
 
 const db = require('../../core/db/client');
 const { NotFoundError, ValidationError } = require('../../core/error/errors');
-const { getUtcToday } = require('../../utils/timezone');
+const { getUtcToday, calculateCourseProgress } = require('../../utils/timezone');
 const subscriptionsService = require('../subscriptions/service');
 
 /**
@@ -63,22 +63,17 @@ async function getCourseContextForDate(userId, targetDate) {
       ? targetDate.toISOString().split('T')[0]
       : String(targetDate).split('T')[0]);
 
-  // Parse dates as UTC midnight to avoid timezone issues
-  const courseStart = new Date(courseStartStr + 'T00:00:00.000Z');
-  const date = new Date(targetDateStr + 'T00:00:00.000Z');
-
-  // Calculate days difference (should be exact day count)
-  // Use Math.round instead of Math.floor to handle any floating point precision issues
+  // Calculate week/day for the specific targetDate (not always today)
+  // Use UTC midnight for both dates to ensure consistent calculation
+  const courseStartUTC = new Date(courseStartStr + 'T00:00:00.000Z');
+  const targetDateUTC = new Date(targetDateStr + 'T00:00:00.000Z');
+  
+  // Calculate days difference using Math.floor (same as calculateCourseProgress)
   const daysSinceStart = Math.max(
     0,
-    Math.round((date - courseStart) / (1000 * 60 * 60 * 24))
+    Math.floor((targetDateUTC - courseStartUTC) / (1000 * 60 * 60 * 24))
   );
   
-  // Debug logging (can be removed later)
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[getCourseContextForDate] userId=${userId}, courseStart=${courseStartStr}, targetDate=${targetDateStr}, daysSinceStart=${daysSinceStart}, week=${Math.floor(daysSinceStart / 7) + 1}, day=${(daysSinceStart % 7) + 1}`);
-  }
-
   const weekNumber = Math.floor(daysSinceStart / 7) + 1;
   const dayNumber = (daysSinceStart % 7) + 1;
 
@@ -383,14 +378,26 @@ const progressService = {
 
     const weeklyExamsRows = weeklyExamsResult?.rows || [];
 
+    // Calculate current week and day dynamically (using UTC to match other services)
+    // Normalize course_start_date to YYYY-MM-DD string to avoid timezone issues
+    let courseStartStr;
+    if (typeof course.course_start_date === 'string') {
+      courseStartStr = course.course_start_date.split('T')[0];
+    } else if (course.course_start_date instanceof Date) {
+      courseStartStr = course.course_start_date.toISOString().split('T')[0];
+    } else {
+      courseStartStr = String(course.course_start_date).split('T')[0];
+    }
+    const { week: currentWeek, day: currentDay } = calculateCourseProgress(courseStartStr);
+
     return {
       analytics: {
         course: {
           id: course.id,
           startDate: course.course_start_date,
           endDate: course.course_end_date,
-          currentWeek: course.current_week,
-          currentDay: course.current_day,
+          currentWeek,
+          currentDay,
         },
         progress: {
           total_days: parseInt(stats?.total_days || 0),

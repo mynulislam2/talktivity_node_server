@@ -37,22 +37,44 @@ function initSocket(server, allowedOrigins) {
   });
 
   // WebSocket authentication
+  // Note: Made optional for voice call sessions (unauthenticated calls allowed)
+  // Authenticated users can still send tokens for additional features
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
-      if (!token) {
-        console.warn(`⚠️  WebSocket rejected: No token from ${socket.handshake.address}`);
-        return next(new Error('Authentication required'));
+      // Get token from either auth.token (Socket.IO client) or Authorization header
+      let token = socket.handshake.auth.token;
+      
+      if (!token || typeof token !== 'string') {
+        // Fallback to Authorization header
+        token = socket.handshake.headers.authorization;
       }
-      const cleanToken = token.replace('Bearer ', '');
+
+      // If no token found, allow connection but mark as anonymous
+      if (!token || typeof token !== 'string') {
+        console.log(`ℹ️  Anonymous WebSocket connection from ${socket.handshake.address} (no auth token provided)`);
+        socket.userId = null;
+        socket.userEmail = null;
+        return next();
+      }
+
+      // Token provided - validate it
+      const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+      
+      if (!cleanToken) {
+        console.warn(`⚠️  WebSocket rejected from ${socket.handshake.address}: Invalid token format`);
+        return next(new Error('Invalid token format'));
+      }
+
+      // Verify JWT signature
       const decoded = jwt.verify(cleanToken, process.env.JWT_SECRET);
       socket.userId = decoded.userId;
       socket.userEmail = decoded.email;
       console.log(`✅ WebSocket authenticated: User ${decoded.userId} (${decoded.email})`);
       next();
     } catch (error) {
+      // Auth token was provided but invalid - reject
       console.warn(`⚠️  WebSocket auth failed from ${socket.handshake.address}:`, error.message);
-      next(new Error('Invalid authentication token'));
+      return next(new Error('Invalid authentication token'));
     }
   });
 

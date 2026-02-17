@@ -10,7 +10,7 @@ const LLM_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_PRIMARY = 'openai/gpt-oss-120b';
 const MODEL_FALLBACK = 'openai/gpt-oss-120b';
 
-async function callGroq(prompt, messages, timeout = 60000) {
+async function callGroq(prompt, messages, timeout = 60000, maxTokens = 16384) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error('GROQ_API_KEY not configured');
@@ -19,6 +19,7 @@ async function callGroq(prompt, messages, timeout = 60000) {
   const payload = {
     model: MODEL_PRIMARY,
     temperature: 0.2,
+    max_tokens: maxTokens,
     messages: [
       { role: 'system', content: prompt },
       ...messages,
@@ -34,7 +35,48 @@ async function callGroq(prompt, messages, timeout = 60000) {
       timeout: timeout,
     });
 
-    const content = data?.choices?.[0]?.message?.content || '';
+    // Validate response structure
+    if (!data || !data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      console.error('[LLM Service] Invalid Groq response structure:', JSON.stringify(data, null, 2));
+      throw new Error('Groq API returned invalid response structure');
+    }
+
+    const choice = data.choices[0];
+    const finishReason = choice?.finish_reason;
+    const content = choice?.message?.content || '';
+    
+    // Check if response was truncated due to token limit
+    if (finishReason === 'length') {
+      const usage = data.usage || {};
+      const completionTokens = usage.completion_tokens || 0;
+      const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
+      console.error('[LLM Service] Response truncated - max_tokens reached', {
+        completionTokens,
+        reasoningTokens,
+        maxTokens,
+        hasContent: !!content && content.length > 0,
+      });
+      
+      // If content is empty but we hit the limit, the model used all tokens for reasoning
+      if (!content || content.trim().length === 0) {
+        throw new Error(`Groq API response truncated: model used all ${completionTokens} tokens for reasoning, leaving no tokens for content. Consider increasing max_tokens or using a non-reasoning model.`);
+      }
+      
+      // If we have some content but it was truncated, log a warning but continue
+      console.warn('[LLM Service] Response was truncated but contains content. Content may be incomplete.');
+    }
+    
+    // Log content for debugging (truncated if too long)
+    if (!content || content.trim().length === 0) {
+      console.error('[LLM Service] Empty content from Groq API. Full response:', JSON.stringify(data, null, 2));
+      const errorMsg = finishReason === 'length' 
+        ? 'Groq API returned empty content: all tokens were used for reasoning'
+        : `Groq API returned empty content (finish_reason: ${finishReason || 'unknown'})`;
+      throw new Error(errorMsg);
+    }
+
+    console.log(`[LLM Service] Received content from Groq (${content.length} chars, first 200: ${content.substring(0, 200)})`);
+    
     return safeJson(content);
   } catch (err) {
     // Log detailed error information
@@ -53,14 +95,51 @@ async function callGroq(prompt, messages, timeout = 60000) {
 
     // Fallback attempt
     try {
-      const { data } = await axios.post(LLM_API_URL, { ...payload, model: MODEL_FALLBACK }, {
+      console.log('[LLM Service] Attempting fallback with model:', MODEL_FALLBACK);
+      // Increase max_tokens for fallback to give more room
+      const fallbackPayload = { ...payload, model: MODEL_FALLBACK, max_tokens: Math.max(maxTokens * 2, 32768) };
+      const { data } = await axios.post(LLM_API_URL, fallbackPayload, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         timeout: timeout,
       });
-      const content = data?.choices?.[0]?.message?.content || '';
+
+      // Validate fallback response structure
+      if (!data || !data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+        console.error('[LLM Service] Invalid fallback response structure:', JSON.stringify(data, null, 2));
+        throw new Error('Groq API fallback returned invalid response structure');
+      }
+
+      const fallbackChoice = data.choices[0];
+      const fallbackFinishReason = fallbackChoice?.finish_reason;
+      const content = fallbackChoice?.message?.content || '';
+      
+      // Check if fallback response was truncated
+      if (fallbackFinishReason === 'length') {
+        const usage = data.usage || {};
+        const completionTokens = usage.completion_tokens || 0;
+        console.error('[LLM Service] Fallback response truncated - max_tokens reached', {
+          completionTokens,
+          maxTokens: fallbackPayload.max_tokens,
+          hasContent: !!content && content.length > 0,
+        });
+        
+        if (!content || content.trim().length === 0) {
+          throw new Error(`Groq API fallback response truncated: model used all ${completionTokens} tokens for reasoning`);
+        }
+      }
+      
+      if (!content || content.trim().length === 0) {
+        console.error('[LLM Service] Empty content from Groq fallback. Full response:', JSON.stringify(data, null, 2));
+        const errorMsg = fallbackFinishReason === 'length' 
+          ? 'Groq API fallback returned empty content: all tokens were used for reasoning'
+          : `Groq API fallback returned empty content (finish_reason: ${fallbackFinishReason || 'unknown'})`;
+        throw new Error(errorMsg);
+      }
+
+      console.log(`[LLM Service] Fallback received content (${content.length} chars)`);
       return safeJson(content);
     } catch (e2) {
       // Log fallback error too
@@ -68,6 +147,15 @@ async function callGroq(prompt, messages, timeout = 60000) {
         message: e2.message,
         status: e2.response?.status,
         data: e2.response?.data,
+        responseStructure: e2.response?.data ? {
+          hasChoices: !!e2.response.data.choices,
+          choicesLength: e2.response.data.choices?.length,
+          firstChoice: e2.response.data.choices?.[0] ? {
+            hasMessage: !!e2.response.data.choices[0].message,
+            hasContent: !!e2.response.data.choices[0].message?.content,
+            contentLength: e2.response.data.choices[0].message?.content?.length,
+          } : null,
+        } : null,
       });
       throw err; // Throw original error
     }
@@ -75,19 +163,54 @@ async function callGroq(prompt, messages, timeout = 60000) {
 }
 
 function safeJson(text) {
+  if (!text || typeof text !== 'string') {
+    console.error('[LLM Service] safeJson received invalid input:', typeof text, text);
+    throw new Error('LLM did not return valid JSON: empty or invalid input');
+  }
+
   // Strip code fences if present
-  const cleaned = text.trim().replace(/^```json\n?|```$/g, '');
+  let cleaned = text.trim().replace(/^```json\n?/i, '').replace(/```$/g, '').trim();
+  
+  // Log what we're trying to parse (truncated)
+  if (cleaned.length > 500) {
+    console.log(`[LLM Service] Attempting to parse JSON (${cleaned.length} chars, first 500: ${cleaned.substring(0, 500)})`);
+  } else {
+    console.log(`[LLM Service] Attempting to parse JSON: ${cleaned}`);
+  }
+
   try {
     return JSON.parse(cleaned);
-  } catch {
+  } catch (parseError) {
+    console.warn('[LLM Service] Initial JSON parse failed, attempting extraction:', parseError.message);
+    
     // Attempt to find first JSON object in text
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
-    if (start !== -1 && end !== -1) {
+    if (start !== -1 && end !== -1 && end > start) {
       const snippet = cleaned.slice(start, end + 1);
-      try { return JSON.parse(snippet); } catch { }
+      console.log(`[LLM Service] Extracted JSON snippet (${snippet.length} chars): ${snippet.substring(0, 200)}`);
+      try { 
+        return JSON.parse(snippet); 
+      } catch (extractError) {
+        console.error('[LLM Service] Extracted snippet also failed to parse:', extractError.message);
+        console.error('[LLM Service] Snippet content:', snippet);
+      }
     }
-    throw new Error('LLM did not return valid JSON');
+    
+    // Attempt to find JSON array
+    const arrayStart = cleaned.indexOf('[');
+    const arrayEnd = cleaned.lastIndexOf(']');
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      const arraySnippet = cleaned.slice(arrayStart, arrayEnd + 1);
+      try {
+        return JSON.parse(arraySnippet);
+      } catch (arrayError) {
+        console.error('[LLM Service] Array extraction also failed:', arrayError.message);
+      }
+    }
+    
+    console.error('[LLM Service] Failed to extract valid JSON from:', cleaned.substring(0, 1000));
+    throw new Error(`LLM did not return valid JSON. Content preview: ${cleaned.substring(0, 200)}`);
   }
 }
 
@@ -96,7 +219,7 @@ const llmService = {
     const messages = [
       { role: 'user', content: JSON.stringify({ utterances: userUtterances }) },
     ];
-    return await callGroq(reportPrompt, messages, 60000);
+    return await callGroq(reportPrompt, messages, 60000, 32768);
   },
 
   async evaluateQuizAnswers(answers) {
@@ -179,8 +302,10 @@ const llmService = {
         { role: 'user', content: JSON.stringify(payload) },
       ];
       // Use longer timeout for report tasks
+      // Use higher max_tokens for report tasks to handle complex analysis
       const timeout = task === 'report' ? 60000 : 30000;
-      return await callGroq(promptConfig, messages, timeout);
+      const maxTokens = task === 'report' ? 32768 : 16384;
+      return await callGroq(promptConfig, messages, timeout, maxTokens);
     } else if (typeof promptConfig === 'object' && promptConfig.systemPrompt && promptConfig.userPrompt) {
       // New structure: system + user with placeholder injection
       const systemPrompt = promptConfig.systemPrompt;
@@ -216,8 +341,10 @@ const llmService = {
       ];
 
       // Use longer timeout for dailyReport (60 seconds) as it processes more data
+      // Use higher max_tokens for dailyReport to handle large transcripts and complex reasoning
       const timeout = task === 'dailyReport' ? 60000 : 30000;
-      return await callGroq(systemPrompt, messages, timeout);
+      const maxTokens = task === 'dailyReport' ? 32768 : 16384;
+      return await callGroq(systemPrompt, messages, timeout, maxTokens);
     } else {
       throw new Error(`Invalid prompt configuration for task: ${task}`);
     }

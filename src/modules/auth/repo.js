@@ -26,12 +26,12 @@ const authRepo = {
 
   async createUser({ email, password, fullName }) {
     return await db.transaction(async (client) => {
-      // Create user
+      // Create user (fullName can be null, will be collected during onboarding)
       const user = await client.query(
         `INSERT INTO users (email, password, full_name, auth_provider, is_email_verified, created_at, updated_at)
          VALUES ($1, $2, $3, 'local', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          RETURNING id, email, full_name, created_at`,
-        [email, password, fullName]
+        [email, password, fullName || null]
       );
 
       // Initialize user_lifecycle

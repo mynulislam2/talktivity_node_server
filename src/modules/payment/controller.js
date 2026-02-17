@@ -1,142 +1,259 @@
-/**
- * Payment Module Controller (Postman-aligned)
- */
-
-const { ValidationError } = require('../../core/error/errors');
 const paymentService = require('./service');
+const { sendSuccess, sendError } = require('../../core/http/response');
+const { ValidationError } = require('../../core/error/errors');
 
 const paymentController = {
   async createPayment(req, res, next) {
     try {
+      const { planType, amount, currency } = req.body;
       const userId = req.user?.userId;
-      const plan = req.body?.planId || req.body?.planType;
 
       if (!userId) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
+        throw new ValidationError('User authentication required');
       }
 
-      if (!plan) {
-        return res.status(400).json({ success: false, error: 'planId is required' });
+      if (!planType || !amount || !currency) {
+        throw new ValidationError('Plan type, amount, and currency are required');
       }
 
-      const payment = await paymentService.createPaymentRequest(
-        userId,
-        plan,
-        req.ip,
-        req.get('user-agent')
-      );
-
-      res.status(201).json({ success: true, data: payment });
+      const result = await paymentService.createPayment(userId, planType, { amount, currency });
+      sendSuccess(res, result, 201, 'Payment created successfully');
     } catch (error) {
-      if (error instanceof ValidationError) {
-        return res.status(400).json({ success: false, error: error.message });
-      }
       next(error);
     }
   },
 
-  async handleWebhook(req, res) {
-    try {
-      const transactionId = req.body?.trans_id || req.body?.transactionId;
-      const paymentStatus = req.body?.status || req.body?.paymentStatus;
-
-      if (!transactionId || !paymentStatus) {
-        return res.status(400).json({ success: false, error: 'Missing trans_id or status' });
-      }
-
-      const result = await paymentService.verifyPaymentWebhook(transactionId, paymentStatus);
-      return res.json({ success: true, data: result });
-    } catch (error) {
-      console.error('Payment webhook error:', error);
-      return res.status(500).json({ success: false, error: 'Failed to process payment webhook' });
-    }
-  },
-
-  /**
-   * Create AamarPay payment
-   * POST /api/payments/aamarpay/payment
-   */
   async createAamarPayPayment(req, res, next) {
     try {
+      const { planType, amount, currency, desc, discountToken, isMobile } = req.body;
       const userId = req.user?.userId;
-      const { planType, amount, currency, desc, cus_email, cus_name, cus_phone, cus_add1, discountToken } = req.body;
 
       if (!userId) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
+        throw new ValidationError('User authentication required');
       }
 
-      if (!planType) {
-        return res.status(400).json({ success: false, error: 'planType is required' });
+      if (!planType || !amount || !currency) {
+        throw new ValidationError('Plan type, amount, and currency are required');
       }
 
-      // Get base URL for redirect URLs
-      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      const payload = {
+      // Detect if request is from mobile app
+      const userAgent = req.headers['user-agent'] || '';
+      const isMobileRequest = isMobile === true || 
+                             isMobile === 'true' ||
+                             /ReactNative|Expo|Android|iOS/i.test(userAgent);
+
+      let success_url, fail_url, cancel_url;
+
+      if (isMobileRequest) {
+        // Use backend endpoints that return HTML with embedded payment data
+        // AamarPay will POST to these URLs, and backend will return HTML with payment result
+        // Construct URL from request (accessible from AamarPay's servers)
+        // Priority: Environment variable > Request host (with forwarded headers) > localhost fallback
+        let backendBaseUrl;
+        if (process.env.API_BASE_URL || process.env.BACKEND_URL) {
+          backendBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL;
+          console.log('[Payment] Using API_BASE_URL from environment:', backendBaseUrl);
+        } else {
+          // Construct from request - check forwarded headers first (for proxies/load balancers)
+          const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
+          const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:8082';
+          backendBaseUrl = `${protocol}://${host}`;
+          
+          console.log('[Payment] Constructed backend URL from request:', {
+            protocol,
+            host,
+            'x-forwarded-host': req.get('x-forwarded-host'),
+            'x-forwarded-proto': req.get('x-forwarded-proto'),
+            'req.host': req.get('host'),
+            'req.protocol': req.protocol,
+            finalUrl: backendBaseUrl
+          });
+          
+          // Warn if using localhost (won't work from AamarPay's servers)
+          if (host.includes('localhost') || host.includes('127.0.0.1')) {
+            console.warn('[Payment] ⚠️  Using localhost for mobile payment redirects. AamarPay servers cannot reach localhost.');
+            console.warn('[Payment] ⚠️  Set API_BASE_URL in .env to a publicly accessible URL (e.g., http://192.168.0.105:8082 or your domain).');
+          }
+        }
+        
+        success_url = `${backendBaseUrl}/api/payments/aamarpay/mobile-success`;
+        fail_url = `${backendBaseUrl}/api/payments/aamarpay/mobile-fail`;
+        cancel_url = `${backendBaseUrl}/api/payments/aamarpay/mobile-cancel`;
+      } else {
+        // Web flow - use frontend URLs
+        const frontendBaseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
+        success_url = `${frontendBaseUrl}/api/payment-success-redirect`;
+        fail_url = `${frontendBaseUrl}/api/payment-failed-redirect`;
+        cancel_url = `${frontendBaseUrl}/api/payment-cancel-redirect`;
+      }
+
+      const result = await paymentService.createAamarPayPayment(userId, planType, {
         amount,
-        currency: currency || 'BDT',
+        currency,
         desc: desc || `Talktivity ${planType} Plan Subscription`,
-        cus_email,
-        cus_name,
-        cus_phone,
-        cus_add1,
-        discountToken: discountToken || null, // Pass discount token if provided
-        cancel_url: `${baseUrl}/api/payment-cancel-redirect`,
-        fail_url: `${baseUrl}/api/payment-failed-redirect`,
-        success_url: `${baseUrl}/api/payment-success-redirect`,
-      };
+        discountToken,
+        success_url,
+        fail_url,
+        cancel_url,
+        cus_email: req.user.email,
+        cus_name: req.user.full_name || 'Talktivity User',
+        cus_phone: req.user.phone || '01XXXXXXXX',
+        cus_add1: req.user.address || 'N/A',
+      });
 
-      const result = await paymentService.createAamarPayPayment(userId, planType, payload);
-      return res.json({ success: true, data: result });
+      sendSuccess(res, result, 201, 'Payment URL generated successfully');
     } catch (error) {
-      console.error('AamarPay payment creation error:', error);
-      if (error instanceof ValidationError) {
-        return res.status(400).json({ success: false, error: error.message });
-      }
       next(error);
     }
   },
 
-  /**
-   * Process AamarPay success callback
-   * POST /api/payments/aamarpay/process-success
-   */
   async processAamarPaySuccess(req, res, next) {
     try {
-      const aamarpayResponse = req.body;
+      const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'success');
-      return res.json({ success: true, data: result });
+      sendSuccess(res, result, 200, 'Payment processed successfully');
     } catch (error) {
-      console.error('AamarPay success processing error:', error);
       next(error);
     }
   },
 
-  /**
-   * Process AamarPay cancel callback
-   * POST /api/payments/aamarpay/process-cancel
-   */
   async processAamarPayCancel(req, res, next) {
     try {
-      const aamarpayResponse = req.body;
+      const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'cancel');
-      return res.json({ success: true, data: result });
+      sendSuccess(res, result, 200, 'Payment cancelled');
     } catch (error) {
-      console.error('AamarPay cancel processing error:', error);
+      next(error);
+    }
+  },
+
+  async processAamarPayFail(req, res, next) {
+    try {
+      const aamarpayResponse = req.body || {};
+      const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
+      sendSuccess(res, result, 200, 'Payment failed');
+    } catch (error) {
       next(error);
     }
   },
 
   /**
-   * Process AamarPay failure callback
-   * POST /api/payments/aamarpay/process-fail
+   * Mobile: Handle AamarPay success callback (POST from gateway)
+   * Returns JSON response for mobile - frontend intercepts and navigates to static screen
+   * POST /api/payments/aamarpay/mobile-success
    */
-  async processAamarPayFail(req, res, next) {
+  async handleMobilePaymentSuccess(req, res) {
     try {
-      const aamarpayResponse = req.body;
-      const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
-      return res.json({ success: true, data: result });
+      // Extract form data from AamarPay POST (form-urlencoded or JSON)
+      const aamarpayResponse = req.body || {};
+      
+      // Process payment in backend
+      const result = await paymentService.processAamarPayResult(aamarpayResponse, 'success');
+      
+      // Verify payment actually succeeded - check AamarPay response
+      const paymentStatus = aamarpayResponse.status || aamarpayResponse.pay_status || '';
+      const isActuallySuccess = paymentStatus.toLowerCase().includes('success') || 
+                                paymentStatus.toLowerCase().includes('successful') ||
+                                aamarpayResponse.pg_txnid || 
+                                aamarpayResponse.epw_txnid;
+      
+      // Return JSON response - frontend will intercept and navigate to static screen
+      // No HTML needed for mobile
+      res.setHeader('Content-Type', 'application/json');
+      return res.json({
+        success: isActuallySuccess,
+        outcome: isActuallySuccess ? 'success' : 'error',
+        order_id: result.order_id,
+        payment_verified: isActuallySuccess,
+        data: aamarpayResponse
+      });
     } catch (error) {
-      console.error('AamarPay fail processing error:', error);
+      console.error('Mobile payment success error:', error);
+      // Return JSON error response
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).json({
+        success: false,
+        outcome: 'error',
+        error: error.message || 'Payment processing error',
+        data: req.body || {}
+      });
+    }
+  },
+
+  /**
+   * Mobile: Handle AamarPay failure callback
+   * POST /api/payments/aamarpay/mobile-fail
+   */
+  async handleMobilePaymentFail(req, res) {
+    try {
+      const aamarpayResponse = req.body || {};
+      const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
+      
+      // Return JSON response - frontend will intercept and navigate to static screen
+      // No HTML needed for mobile
+      res.setHeader('Content-Type', 'application/json');
+      return res.json({
+        success: false,
+        outcome: 'fail',
+        order_id: result.order_id,
+        data: aamarpayResponse
+      });
+    } catch (error) {
+      console.error('Mobile payment fail error:', error);
+      // Even if processing fails, return success response so frontend can navigate
+      // The frontend will show the failure screen regardless
+      const orderId = req.body?.mer_txnid || req.body?.order_id || req.body?.tran_id || 'unknown';
+      res.setHeader('Content-Type', 'application/json');
+      return res.json({
+        success: false,
+        outcome: 'fail',
+        order_id: orderId,
+        error: error.message || 'Payment processing error',
+        data: req.body || {}
+      });
+    }
+  },
+
+  /**
+   * Mobile: Handle AamarPay cancel callback
+   * POST /api/payments/aamarpay/mobile-cancel
+   */
+  async handleMobilePaymentCancel(req, res) {
+    try {
+      const aamarpayResponse = req.body || {};
+      const result = await paymentService.processAamarPayResult(aamarpayResponse, 'cancel');
+      
+      // Return JSON response - frontend will intercept and navigate to static screen
+      // No HTML needed for mobile
+      res.setHeader('Content-Type', 'application/json');
+      return res.json({
+        success: false,
+        outcome: 'cancel',
+        order_id: result.order_id,
+        data: aamarpayResponse
+      });
+    } catch (error) {
+      console.error('Mobile payment cancel error:', error);
+      // Return JSON error response
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).json({
+        success: false,
+        outcome: 'cancel',
+        error: error.message || 'Payment processing error',
+        data: req.body || {}
+      });
+    }
+  },
+
+  async handleWebhook(req, res, next) {
+    try {
+      const webhookData = req.body || {};
+      console.log('[Payment] Webhook received:', webhookData);
+      
+      // Process webhook data
+      // This is a placeholder - implement based on your webhook requirements
+      sendSuccess(res, { received: true }, 200, 'Webhook received');
+    } catch (error) {
       next(error);
     }
   },

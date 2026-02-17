@@ -116,14 +116,20 @@ async function markDMAsRead(userId, dmId) {
   if (!userId || !dmId) {
     throw new ValidationError('User ID and DM ID are required');
   }
-  
-  await db.query(
-    `UPDATE last_read_at SET last_read_at = NOW() WHERE user_id = $1 AND dm_id = $2;
-     INSERT INTO last_read_at (user_id, dm_id, last_read_at)
-     SELECT $1, $2, NOW()
-     WHERE NOT EXISTS (SELECT 1 FROM last_read_at WHERE user_id = $1 AND dm_id = $2);`,
+
+  // First try to update an existing row
+  const result = await db.query(
+    'UPDATE last_read_at SET last_read_at = NOW() WHERE user_id = $1 AND dm_id = $2',
     [userId, dmId]
   );
+
+  // If no row was updated, insert a new one
+  if (result.rowCount === 0) {
+    await db.query(
+      'INSERT INTO last_read_at (user_id, dm_id, last_read_at) VALUES ($1, $2, NOW())',
+      [userId, dmId]
+    );
+  }
 }
 
 /**

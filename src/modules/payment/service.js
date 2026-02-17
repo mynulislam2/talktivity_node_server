@@ -143,6 +143,10 @@ const paymentService = {
    * AamarPay: Create payment and return payment URL
    */
   async createAamarPayPayment(userId, planType, payload) {
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
     if (!Payment || !AAMARPAY_STORE_ID || !AAMARPAY_SIGNATURE_KEY) {
       throw new Error('AamarPay not configured');
     }
@@ -377,8 +381,10 @@ const paymentService = {
           );
 
         } else if (outcome === 'fail') {
+          // Keep subscription as 'pending' on failure (constraint allows: pending, active, expired, cancelled)
+          // The subscription can be retried later
           await client.query(
-            `UPDATE subscriptions SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            `UPDATE subscriptions SET status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
             [paymentResult.subscription_id]
           );
         } else if (outcome === 'cancel') {

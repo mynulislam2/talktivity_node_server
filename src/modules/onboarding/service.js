@@ -37,6 +37,7 @@ const onboardingService = {
     let client;
     try {
       const {
+        first_name,
         skill_to_improve,
         language_statement,
         industry,
@@ -167,6 +168,17 @@ const onboardingService = {
          WHERE user_id = $1`,
         [userId, allFieldsFilled]
       );
+
+      // Update user's full_name if firstName is provided
+      if (first_name && first_name.trim().length > 0) {
+        await client.query(
+          `UPDATE users 
+           SET full_name = $1,
+               updated_at = NOW()
+           WHERE id = $2`,
+          [first_name.trim(), userId]
+        );
+      }
 
       return result.rows[0];
     } catch (error) {

@@ -217,16 +217,9 @@ const coursesService = {
         courseStartStr = String(course.course_start_date).split('T')[0];
       }
 
-      // Parse dates as UTC midnight to avoid timezone issues
-      const courseStart = new Date(courseStartStr + 'T00:00:00.000Z');
-      const todayDate = new Date(todayStr + 'T00:00:00.000Z');
-
-      const daysSinceStart = Math.max(
-        0,
-        Math.round((todayDate - courseStart) / (1000 * 60 * 60 * 24))
-      );
-      const currentWeek = Math.floor(daysSinceStart / 7) + 1;
-      const currentDay = (daysSinceStart % 7) + 1;
+      // Use the same UTC-based calculation as other services (getCourseTimeline, vocabulary, etc.)
+      // This ensures consistency across all components
+      const { week: currentWeek, day: currentDay } = calculateCourseProgress(courseStartStr);
 
       // Batch triggering moved to separate endpoint: POST /api/courses/check-and-trigger-batch
 
@@ -358,10 +351,11 @@ const coursesService = {
         courseStartStr = String(course.course_start_date).split('T')[0];
       }
 
-      // We'll determine currentWeek and currentDay by finding which timeline day matches todayISO
-      // Initialize to defaults (will be set when we find the matching day)
-      let currentWeek = 1;
-      let currentDay = 1;
+      // Calculate current week and day using the same UTC-based calculation as getCourseStatus
+      // This ensures consistency across all components
+      const { week: calculatedWeek, day: calculatedDay } = calculateCourseProgress(courseStartStr);
+      let currentWeek = calculatedWeek;
+      let currentDay = calculatedDay;
 
       // Helper: day type schedule
       const getDayType = (dayNumber) => {
@@ -403,6 +397,8 @@ const coursesService = {
         targetDateUTC.setUTCDate(targetDateUTC.getUTCDate() + dayIndex);
         const dateISO = targetDateUTC.toISOString().split('T')[0];
 
+        // Use the same calculation as calculateCourseProgress for consistency
+        // dayIndex represents days since start (0 = first day, 1 = second day, etc.)
         const week = Math.floor(dayIndex / 7) + 1;
         const day = (dayIndex % 7) + 1;
         const dayType = getDayType(day);
@@ -415,11 +411,10 @@ const coursesService = {
         const isCurrentDay = dateISO === todayISO;
         const isPast = dateISO < todayISO;
 
-        // If this is the current day, set currentWeek and currentDay
-        if (isCurrentDay) {
-          currentWeek = week;
-          currentDay = day;
-        }
+        // For the current day, use the calculated currentWeek and currentDay to ensure consistency
+        // with getCourseStatus. For other days, use the dayIndex-based calculation.
+        const finalWeek = isCurrentDay ? currentWeek : week;
+        const finalDay = isCurrentDay ? currentDay : day;
 
         // Personalized speaking topic (aligned to the day index)
         let personalizedTopic = null;
@@ -430,8 +425,8 @@ const coursesService = {
         }
 
         timeline.push({
-          week,
-          day,
+          week: finalWeek,
+          day: finalDay,
           dayIndex,
           date: dateISO,
           dayType,
@@ -450,14 +445,11 @@ const coursesService = {
       const progressPercent = Math.round((completedDays / totalDays) * 100);
 
       // If no day matched todayISO (course hasn't started yet or is in the future),
-      // calculate from daysSinceStart as fallback
+      // use calculateCourseProgress as fallback to ensure consistency with getCourseStatus
       if (currentWeek === 1 && currentDay === 1 && timeline.length > 0) {
-        const courseStartUTC = new Date(courseStartStr + 'T00:00:00.000Z');
-        const todayUTC = new Date(todayISO + 'T00:00:00.000Z');
-        const daysSinceStart = Math.max(0, Math.floor((todayUTC - courseStartUTC) / (1000 * 60 * 60 * 24)));
-        const currentDayIndex = Math.max(0, Math.min(totalDays - 1, daysSinceStart));
-        currentWeek = Math.floor(currentDayIndex / 7) + 1;
-        currentDay = (currentDayIndex % 7) + 1;
+        const { week, day } = calculateCourseProgress(courseStartStr);
+        currentWeek = week;
+        currentDay = day;
       }
 
       return {
@@ -515,10 +507,18 @@ const coursesService = {
 
     const course = courseResult;
 
+    // Normalize course_start_date to YYYY-MM-DD string for consistent calculation
+    let courseStartStr;
+    if (typeof course.course_start_date === 'string') {
+      courseStartStr = course.course_start_date.split('T')[0];
+    } else if (course.course_start_date instanceof Date) {
+      courseStartStr = course.course_start_date.toISOString().split('T')[0];
+    } else {
+      courseStartStr = String(course.course_start_date).split('T')[0];
+    }
+
     // Calculate current week and day using UTC helper (consistent, no timezone issues)
-    const { week: currentWeek, day: currentDay } = calculateCourseProgress(
-      course.course_start_date
-    );
+    const { week: currentWeek, day: currentDay } = calculateCourseProgress(courseStartStr);
 
     const TOTAL_COURSE_WEEKS = 12;
     const isFirstDayOfNewWeek = currentDay === 1 && currentWeek > 1;

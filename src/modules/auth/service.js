@@ -19,11 +19,11 @@ const authService = {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create user
+    // Create user (fullName is optional, will be collected during onboarding)
     const user = await authRepo.createUser({
       email,
       password: passwordHash,
-      fullName,
+      fullName: fullName || null,
     });
 
     // Generate token

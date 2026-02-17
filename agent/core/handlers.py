@@ -238,77 +238,115 @@ class TranscriptSaveHandler:
         self.session_info = session_info
         self.participant = participant
         self.transcript_service = TranscriptService(db_pool)
+        self._save_task: Optional[asyncio.Task] = None
 
     async def save_transcript(self):
         """
         Save the transcript when the session ends.
+        Coordinates between multiple callers (e.g., disconnect handler and shutdown callback)
+        to ensure the save happens exactly once and is awaited and shielded from cancellation.
+        """
+        user_id = self.session_info.get("user_id")
+        
+        # If a save is already in progress, await it (shielded)
+        if self._save_task is not None:
+            if not self._save_task.done():
+                logger.info("[TranscriptSaveHandler] Awaiting existing save task for user %s", user_id)
+                try:
+                    await asyncio.shield(self._save_task)
+                except asyncio.CancelledError:
+                    logger.warning("[TranscriptSaveHandler] Shutdown callback cancelled while awaiting save for user %s, but inner task should continue.", user_id)
+            else:
+                logger.info("[TranscriptSaveHandler] Save task already completed for user %s", user_id)
+            return
+
+        # Start a new shielded save task and await it
+        logger.info("[TranscriptSaveHandler] Initiating NEW shielded save task for user %s", user_id)
+        self._save_task = asyncio.create_task(self._do_save_transcript())
+        try:
+            await asyncio.shield(self._save_task)
+        except asyncio.CancelledError:
+            logger.warning("[TranscriptSaveHandler] Initial caller (disconnect or shutdown) was cancelled, but inner save task for user %s is shielded.", user_id)
+        except Exception as e:
+            logger.error("[TranscriptSaveHandler] Error during shielded save for user %s: %s", user_id, e)
+
+    async def _do_save_transcript(self):
+        """
+        Internal implementation of transcript saving.
         Emits SESSION_STATE events to frontend:
         1. SAVING_CONVERSATION - before saving
         2. SESSION_SAVED or SESSION_SAVE_FAILED - after save attempt
         """
-        # Prevent duplicate saves
+        user_id = self.session_info.get("user_id")
+        room_name = self.session_info.get("room_name")
+
+        # Doubly ensure we don't save twice
         if self.session_info["session_save_handled"]:
-            logger.info("Session save already handled, skipping duplicate")
+            logger.info("[TranscriptSaveHandler] _do_save_transcript: Session already handled for user %s, skipping", user_id)
             return
         self.session_info["session_save_handled"] = True
         
-        user_id = self.session_info["user_id"]
-        room_name = self.session_info["room_name"]
-        
-        # Step 1: Emit SAVING_CONVERSATION state to frontend
-        if user_id and not self.session_info["saving_emitted"]:
-            logger.info("📤 Emitting SAVING_CONVERSATION for user %s", user_id)
-            await emit_saving_conversation(user_id=user_id, api_url=self.config.api.node_api_url, call_id=room_name)
-            self.session_info["saving_emitted"] = True
-        
-        # Get transcript from session
         try:
-            transcript_data = self.session.history.to_dict()
-        except Exception as e:
-            logger.error("Error getting transcript data: %s", e)
-            if user_id:
-                await emit_session_save_failed(
-                    user_id=user_id,
-                    api_url=self.config.api.node_api_url,
-                    call_id=room_name,
-                    error_message="Failed to retrieve conversation data.",
-                )
-            return
-        
-        # Save transcript to database
-        try:
-            # Calculate duration from memory (for call sessions, use call_start_time)
-            session_type = self.session_info["session_type"]
-            if session_type == "call" and "call_start_time" in self.session_info:
-                call_start_time = self.session_info["call_start_time"]
-                call_ended_at = get_utc_now()
-                duration_seconds = int((call_ended_at - call_start_time).total_seconds())
-            else:
-                start_time = self.session_info.get("start_time", get_utc_now())
-                duration_seconds = int((get_utc_now() - start_time).total_seconds())
+            # Step 1: Emit SAVING_CONVERSATION state to frontend
+            if user_id and not self.session_info["saving_emitted"]:
+                logger.info("📤 Emitting SAVING_CONVERSATION for user %s (call_id=%s)", user_id, room_name)
+                await emit_saving_conversation(user_id=user_id, api_url=self.config.api.node_api_url, call_id=room_name)
+                self.session_info["saving_emitted"] = True
             
-            save_success = await self.transcript_service.save_session_transcript(
-                user_id=user_id,
-                room_name=room_name,
-                session_type=session_type,
-                transcript=transcript_data,
-                duration_seconds=duration_seconds,
-                session_info=self.session_info,  # Pass session_info for call_start_time
-            )
-        except Exception as e:
-            logger.error("Error saving transcript: %s", e)
-            save_success = False
-        
-        # Step 3: Emit SESSION_SAVED or SESSION_SAVE_FAILED based on result
-        if user_id:
-            if save_success:
-                logger.info("📤 Emitting SESSION_SAVED for user %s", user_id)
-                await emit_session_saved(user_id=user_id, api_url=self.config.api.node_api_url, call_id=room_name)
-            else:
-                logger.error("📤 Emitting SESSION_SAVE_FAILED for user %s", user_id)
-                await emit_session_save_failed(
+            # Get transcript from session
+            try:
+                transcript_data = self.session.history.to_dict()
+            except Exception as e:
+                logger.error("[TranscriptSaveHandler] Error getting transcript data for user %s: %s", user_id, e)
+                if user_id:
+                    await emit_session_save_failed(
+                        user_id=user_id,
+                        api_url=self.config.api.node_api_url,
+                        call_id=room_name,
+                        error_message="Failed to retrieve conversation data.",
+                    )
+                return
+            
+            # Save transcript to database
+            logger.info("[TranscriptSaveHandler] Writing to database for user %s...", user_id)
+            try:
+                # Calculate duration
+                session_type = self.session_info["session_type"]
+                if session_type == "call" and "call_start_time" in self.session_info:
+                    call_start_time = self.session_info["call_start_time"]
+                    duration_seconds = int((get_utc_now() - call_start_time).total_seconds())
+                else:
+                    start_time = self.session_info.get("start_time", get_utc_now())
+                    duration_seconds = int((get_utc_now() - start_time).total_seconds())
+                
+                save_success = await self.transcript_service.save_session_transcript(
                     user_id=user_id,
-                    api_url=self.config.api.node_api_url,
-                    call_id=room_name,
-                    error_message="Failed to save conversation to database. Please try again.",
+                    room_name=room_name,
+                    session_type=session_type,
+                    transcript=transcript_data,
+                    duration_seconds=duration_seconds,
+                    session_info=self.session_info,
                 )
+            except Exception as e:
+                logger.error("[TranscriptSaveHandler] Database error for user %s: %s", user_id, e)
+                save_success = False
+            
+            # Step 3: Emit SESSION_SAVED or SESSION_SAVE_FAILED based on result
+            if user_id:
+                if save_success:
+                    logger.info("📤 Emitting SESSION_SAVED for user %s (call_id=%s)", user_id, room_name)
+                    await emit_session_saved(user_id=user_id, api_url=self.config.api.node_api_url, call_id=room_name)
+                    logger.info("[TranscriptSaveHandler] ✅ Success for user %s", user_id)
+                else:
+                    logger.error("📤 Emitting SESSION_SAVE_FAILED for user %s (call_id=%s)", user_id, room_name)
+                    await emit_session_save_failed(
+                        user_id=user_id,
+                        api_url=self.config.api.node_api_url,
+                        call_id=room_name,
+                        error_message="Failed to save conversation to database. Please try again.",
+                    )
+        except asyncio.CancelledError:
+            logger.warning("[TranscriptSaveHandler] ‼️ _do_save_transcript was CANCELLED for user %s despite shield? This usually means the loop is closing.", user_id)
+            raise
+        except Exception as e:
+            logger.error("[TranscriptSaveHandler] ❌ Unexpected error in _do_save_transcript for user %s: %s", user_id, e)

@@ -61,6 +61,7 @@ const { discountTokensRouter } = require('./modules/discount-tokens');
 const { router: callRouter } = require('./modules/call');
 const { router: agentRouter } = require('./modules/agent');
 const { router: aiRouter } = require('./modules/ai');
+const { router: livekitConnectionRouter } = require('./modules/livekit-connection');
 
 // Mount routes - 54 core APIs
 app.use('/api/auth', authRouter);
@@ -88,6 +89,7 @@ app.use('/api/discount-tokens', discountTokensRouter);
 app.use('/api/call', callRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/ai', aiRouter);
+app.use('/api/livekit', livekitConnectionRouter);
 
 // 404 handler
 app.use((req, res) => {
