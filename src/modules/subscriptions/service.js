@@ -43,6 +43,8 @@ const subscriptionsService = {
     // User can start free trial if they don't have an active subscription AND haven't used free trial before
     const canStartFreeTrial = !subscription && !hasUsedFreeTrial;
 
+    console.log(`[SubscriptionsService] Status for user ${userId}: active=${!!subscription}, canStartFreeTrial=${canStartFreeTrial}`);
+
     if (subscription) {
       return {
         active: true,
@@ -100,6 +102,8 @@ const subscriptionsService = {
     const startDate = new Date();
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 7);
+
+    console.log(`[SubscriptionsService] Activating 7-day free trial for user ${userId}. Plan ID: ${freetPlan.id}, Expiry: ${endDate}`);
 
     const subscription = await db.queryOne(
       `INSERT INTO subscriptions (user_id, plan_id, status, is_free_trial, start_date, end_date, created_at, updated_at)

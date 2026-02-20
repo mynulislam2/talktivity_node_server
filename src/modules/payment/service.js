@@ -21,7 +21,9 @@ try {
 
 const AAMARPAY_STORE_ID = process.env.AAMARPAY_STORE_ID;
 const AAMARPAY_SIGNATURE_KEY = process.env.AAMARPAY_SIGNATURE_KEY;
-const AAMARPAY_SANDBOX = String(process.env.AAMARPAY_SANDBOX || 'true').toLowerCase() !== 'false';
+const AAMARPAY_SANDBOX = 
+  String(process.env.AAMARPAY_SANDBOX || 'true').toLowerCase() !== 'false' ||
+  String(process.env.AAMARPAY_TEST_MODE || 'false').toLowerCase() === 'true';
 
 const paymentService = {
   // ============ POSTMAN-ALIGNED METHODS ============
@@ -178,8 +180,11 @@ const paymentService = {
       [actualPlanType]
     );
     if (!plan) {
+      console.error(`[PaymentService] Plan type "${actualPlanType}" not found in database`);
       throw new Error(`Plan type "${actualPlanType}" not found`);
     }
+
+    console.log(`[PaymentService] Found plan:`, plan);
 
     const tranId = `TALK_${userId}_${Date.now()}`;
     originalAmount = parseFloat(payload.amount || plan.price_usd || plan.price || 0);
@@ -201,6 +206,7 @@ const paymentService = {
     }
 
     // Create pending records in a transaction
+    console.log(`[PaymentService] Creating pending subscription and transaction for user ${userId}, planId: ${plan.id}, tranId: ${tranId}`);
     let subscriptionId;
     await db.transaction(async (client) => {
       const subRes = await client.query(
@@ -237,6 +243,7 @@ const paymentService = {
     };
 
     const paymentUrl = await pay.init(paymentData);
+    console.log(`[PaymentService] AamarPay payment initialized successfully. Order ID: ${tranId}, URL: ${paymentUrl}`);
     return { 
       payment_url: paymentUrl, 
       order_id: tranId,
@@ -254,6 +261,8 @@ const paymentService = {
       aamarpayResponse.mer_txnid ||
       aamarpayResponse.order_id ||
       aamarpayResponse.tran_id;
+
+    console.log(`[PaymentService] Processing AamarPay result. Outcome: ${outcome}, Raw Order ID: ${rawOrderId}`);
 
     if (!rawOrderId) {
       console.error('AamarPay callback missing orderId-like field', {
@@ -291,7 +300,7 @@ const paymentService = {
     }
 
     if (!paymentResult) {
-      console.error('AamarPay callback: payment transaction not found', {
+      console.error('[PaymentService] AamarPay callback: matching payment transaction not found in database', {
         outcome,
         orderId,
         keys: Object.keys(aamarpayResponse || {}),
@@ -302,6 +311,8 @@ const paymentService = {
       });
       throw new Error('Payment transaction not found');
     }
+
+    console.log(`[PaymentService] Found payment transaction record:`, paymentResult);
 
     // Finalize core payment + subscription changes inside a single transaction
     await this.finalizeAamarPayTransaction(paymentResult, aamarpayResponse, outcome, orderId);
@@ -343,6 +354,8 @@ const paymentService = {
     const method = aamarpayResponse.card_type || 'aamarPay';
     const gatewayResp = JSON.stringify(aamarpayResponse);
 
+    console.log(`[PaymentService] Finalizing AamarPay transaction. Order ID: ${orderId}, Outcome: ${outcome}, Status will be updated for payment ID: ${paymentResult.id}`);
+
     await db.transaction(async (client) => {
       // Update payment transaction
       await client.query(
@@ -369,6 +382,8 @@ const paymentService = {
           const endDate = new Date(startDate);
           endDate.setDate(startDate.getDate() + days);
 
+          console.log(`[PaymentService] Success: Activating subscription ${paymentResult.subscription_id}. Free Trial reset to false. Expiry: ${endDate}`);
+
           await client.query(
             `UPDATE subscriptions
              SET status = 'active',
@@ -382,6 +397,7 @@ const paymentService = {
           );
 
           // Expire any other currently active subscriptions for the user
+          console.log(`[PaymentService] Success: Expiring any other active subscriptions for user ${paymentResult.user_id} to ensure plan exclusivity.`);
           await client.query(
             `UPDATE subscriptions 
              SET status = 'expired', 
@@ -391,6 +407,7 @@ const paymentService = {
           );
 
         } else if (outcome === 'fail') {
+          console.log(`[PaymentService] Failure: Marking subscription ${paymentResult.subscription_id} as pending due to payment failure`);
           // Keep subscription as 'pending' on failure (constraint allows: pending, active, expired, cancelled)
           // The subscription can be retried later
           await client.query(
@@ -398,6 +415,7 @@ const paymentService = {
             [paymentResult.subscription_id]
           );
         } else if (outcome === 'cancel') {
+          console.log(`[PaymentService] Cancelled: Marking subscription ${paymentResult.subscription_id} as cancelled`);
           await client.query(
             `UPDATE subscriptions SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
             [paymentResult.subscription_id]

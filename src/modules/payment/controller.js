@@ -36,6 +36,8 @@ const paymentController = {
         throw new ValidationError('Plan type, amount, and currency are required');
       }
 
+      console.log(`[PaymentController] Creating AamarPay payment for user ${userId}, plan: ${planType}, amount: ${amount} ${currency}`);
+
       // Detect if request is from mobile app
       const userAgent = req.headers['user-agent'] || '';
       const isMobileRequest = isMobile === true || 
@@ -50,9 +52,9 @@ const paymentController = {
         // Construct URL from request (accessible from AamarPay's servers)
         // Priority: Environment variable > Request host (with forwarded headers) > localhost fallback
         let backendBaseUrl;
-        if (process.env.API_BASE_URL || process.env.BACKEND_URL) {
-          backendBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL;
-          console.log('[Payment] Using API_BASE_URL from environment:', backendBaseUrl);
+        if (process.env.BACKEND_URL) {
+          backendBaseUrl = process.env.BACKEND_URL;
+          console.log('[Payment] Using BACKEND_URL from environment:', backendBaseUrl);
         } else {
           // Construct from request - check forwarded headers first (for proxies/load balancers)
           const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
@@ -110,6 +112,7 @@ const paymentController = {
   async processAamarPaySuccess(req, res, next) {
     try {
       const aamarpayResponse = req.body || {};
+      console.log('[PaymentController] Processing AamarPay success result:', aamarpayResponse);
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'success');
       sendSuccess(res, result, 200, 'Payment processed successfully');
     } catch (error) {
@@ -120,6 +123,7 @@ const paymentController = {
   async processAamarPayCancel(req, res, next) {
     try {
       const aamarpayResponse = req.body || {};
+      console.log('[PaymentController] Processing AamarPay cancel result:', aamarpayResponse);
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'cancel');
       sendSuccess(res, result, 200, 'Payment cancelled');
     } catch (error) {
@@ -130,6 +134,7 @@ const paymentController = {
   async processAamarPayFail(req, res, next) {
     try {
       const aamarpayResponse = req.body || {};
+      console.log('[PaymentController] Processing AamarPay fail result:', aamarpayResponse);
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
       sendSuccess(res, result, 200, 'Payment failed');
     } catch (error) {
@@ -146,6 +151,7 @@ const paymentController = {
     try {
       // Extract form data from AamarPay POST (form-urlencoded or JSON)
       const aamarpayResponse = req.body || {};
+      console.log('[PaymentController] Mobile success callback received:', aamarpayResponse);
       
       // Process payment in backend
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'success');
@@ -157,16 +163,31 @@ const paymentController = {
                                 aamarpayResponse.pg_txnid || 
                                 aamarpayResponse.epw_txnid;
       
-      // Return JSON response - frontend will intercept and navigate to static screen
-      // No HTML needed for mobile
-      res.setHeader('Content-Type', 'application/json');
-      return res.json({
-        success: isActuallySuccess,
-        outcome: isActuallySuccess ? 'success' : 'error',
-        order_id: result.order_id,
-        payment_verified: isActuallySuccess,
-        data: aamarpayResponse
-      });
+      // Return HTML response - WebView will detect the URL and navigate to static screen
+      res.setHeader('Content-Type', 'text/html');
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
+              .card { text-align: center; padding: 20px; }
+              .icon { font-size: 50px; color: #10b981; margin-bottom: 20px; }
+              .loader { border: 3px solid #1e1b4b; border-top: 3px solid #7B70FF; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
+              @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">✓</div>
+              <h2>Payment Successful</h2>
+              <p>Verified. Redirecting you back...</p>
+              <div class="loader"></div>
+            </div>
+          </body>
+        </html>
+      `);
     } catch (error) {
       console.error('Mobile payment success error:', error);
       // Return JSON error response
@@ -189,15 +210,28 @@ const paymentController = {
       const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
       
-      // Return JSON response - frontend will intercept and navigate to static screen
-      // No HTML needed for mobile
-      res.setHeader('Content-Type', 'application/json');
-      return res.json({
-        success: false,
-        outcome: 'fail',
-        order_id: result.order_id,
-        data: aamarpayResponse
-      });
+      // Return HTML response
+      res.setHeader('Content-Type', 'text/html');
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
+              .card { text-align: center; padding: 20px; }
+              .icon { font-size: 50px; color: #ef4444; margin-bottom: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">✕</div>
+              <h2>Payment Failed</h2>
+              <p>Something went wrong with the transaction.</p>
+            </div>
+          </body>
+        </html>
+      `);
     } catch (error) {
       console.error('Mobile payment fail error:', error);
       // Even if processing fails, return success response so frontend can navigate
@@ -223,15 +257,28 @@ const paymentController = {
       const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'cancel');
       
-      // Return JSON response - frontend will intercept and navigate to static screen
-      // No HTML needed for mobile
-      res.setHeader('Content-Type', 'application/json');
-      return res.json({
-        success: false,
-        outcome: 'cancel',
-        order_id: result.order_id,
-        data: aamarpayResponse
-      });
+      // Return HTML response
+      res.setHeader('Content-Type', 'text/html');
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
+              .card { text-align: center; padding: 20px; }
+              .icon { font-size: 50px; color: #f59e0b; margin-bottom: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">!</div>
+              <h2>Payment Cancelled</h2>
+              <p>You have cancelled the payment process.</p>
+            </div>
+          </body>
+        </html>
+      `);
     } catch (error) {
       console.error('Mobile payment cancel error:', error);
       // Return JSON error response
@@ -248,7 +295,7 @@ const paymentController = {
   async handleWebhook(req, res, next) {
     try {
       const webhookData = req.body || {};
-      console.log('[Payment] Webhook received:', webhookData);
+      console.log('[PaymentController] Webhook callback received:', webhookData);
       
       // Process webhook data
       // This is a placeholder - implement based on your webhook requirements
