@@ -375,9 +375,19 @@ const paymentService = {
                  start_date = $1,
                  end_date = $2,
                  payment_id = $3,
+                 is_free_trial = false,
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = $4`,
             [startDate, endDate, orderId, paymentResult.subscription_id]
+          );
+
+          // Expire any other currently active subscriptions for the user
+          await client.query(
+            `UPDATE subscriptions 
+             SET status = 'expired', 
+                 updated_at = CURRENT_TIMESTAMP 
+             WHERE user_id = $1 AND id != $2 AND status = 'active'`,
+            [paymentResult.user_id, paymentResult.subscription_id]
           );
 
         } else if (outcome === 'fail') {
