@@ -163,31 +163,9 @@ const paymentController = {
                                 aamarpayResponse.pg_txnid || 
                                 aamarpayResponse.epw_txnid;
       
-      // Return HTML response - WebView will detect the URL and navigate to static screen
+      // Return HTML with loader only
       res.setHeader('Content-Type', 'text/html');
-      return res.send(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
-              .card { text-align: center; padding: 20px; }
-              .icon { font-size: 50px; color: #10b981; margin-bottom: 20px; }
-              .loader { border: 3px solid #1e1b4b; border-top: 3px solid #7B70FF; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
-              @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <div class="icon">✓</div>
-              <h2>Payment Successful</h2>
-              <p>Verified. Redirecting you back...</p>
-              <div class="loader"></div>
-            </div>
-          </body>
-        </html>
-      `);
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title></title><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#050110;display:flex;justify-content:center;align-items:center}.loader{width:40px;height:40px;border:3px solid #1e1b4b;border-top:3px solid #7B70FF;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style></head><body><div class="loader"></div></body></html>`);
     } catch (error) {
       console.error('Mobile payment success error:', error);
       // Return JSON error response
@@ -210,28 +188,9 @@ const paymentController = {
       const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'fail');
       
-      // Return HTML response
+      // Return HTML with loader only
       res.setHeader('Content-Type', 'text/html');
-      return res.send(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
-              .card { text-align: center; padding: 20px; }
-              .icon { font-size: 50px; color: #ef4444; margin-bottom: 20px; }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <div class="icon">✕</div>
-              <h2>Payment Failed</h2>
-              <p>Something went wrong with the transaction.</p>
-            </div>
-          </body>
-        </html>
-      `);
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title></title><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#050110;display:flex;justify-content:center;align-items:center}.loader{width:40px;height:40px;border:3px solid #1e1b4b;border-top:3px solid #7B70FF;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style></head><body><div class="loader"></div></body></html>`);
     } catch (error) {
       console.error('Mobile payment fail error:', error);
       // Even if processing fails, return success response so frontend can navigate
@@ -257,28 +216,9 @@ const paymentController = {
       const aamarpayResponse = req.body || {};
       const result = await paymentService.processAamarPayResult(aamarpayResponse, 'cancel');
       
-      // Return HTML response
+      // Return HTML with loader only
       res.setHeader('Content-Type', 'text/html');
-      return res.send(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-              body { background-color: #050110; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, system-ui, sans-serif; }
-              .card { text-align: center; padding: 20px; }
-              .icon { font-size: 50px; color: #f59e0b; margin-bottom: 20px; }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <div class="icon">!</div>
-              <h2>Payment Cancelled</h2>
-              <p>You have cancelled the payment process.</p>
-            </div>
-          </body>
-        </html>
-      `);
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title></title><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#050110;display:flex;justify-content:center;align-items:center}.loader{width:40px;height:40px;border:3px solid #1e1b4b;border-top:3px solid #7B70FF;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style></head><body><div class="loader"></div></body></html>`);
     } catch (error) {
       console.error('Mobile payment cancel error:', error);
       // Return JSON error response
