@@ -14,8 +14,72 @@ const {
   DEFAULT_TTL_MINUTES,
 } = require('./utils');
 const { ValidationError } = require('../../core/error/errors');
+const db = require('../../core/db/client');
 
 const livekitConnectionService = {
+  /**
+   * Check if user can start a session based on time limits
+   * @param {number} userId - User ID
+   * @param {string} sessionType - Session type (call, practice, roleplay)
+   * @throws {ValidationError} if user has exceeded time limits
+   */
+  async validateTimeLimit(userId, sessionType) {
+    // Call sessions: check lifetime limit (2 minutes)
+    if (sessionType === 'call') {
+      const result = await db.queryOne(
+        `SELECT COALESCE(SUM(call_duration_seconds), 0) as total_duration
+         FROM call_sessions WHERE user_id = $1`,
+        [userId]
+      );
+      const totalDuration = parseInt(result?.total_duration || 0);
+      const LIFETIME_CALL_LIMIT = 120; // 2 minutes
+      if (totalDuration >= LIFETIME_CALL_LIMIT) {
+        throw new ValidationError('Call session lifetime limit (2 minutes) has been reached');
+      }
+      return; // Call sessions can proceed
+    }
+
+    // Practice/roleplay: check daily limits
+    const subscription = await db.queryOne(
+      `SELECT s.plan_type FROM subscriptions s
+       WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()`,
+      [userId]
+    );
+
+    if (!subscription) {
+      throw new ValidationError('No active subscription found');
+    }
+
+    const planType = subscription.plan_type;
+    const PRACTICE_CAP_BASIC = 5 * 60; // 5 minutes
+    const PRACTICE_CAP_PRO = 10 * 60; // 10 minutes
+    const ROLEPLAY_CAP_BASIC = 5 * 60;
+    const ROLEPLAY_CAP_PRO = 10 * 60;
+
+    const today = new Date().toISOString().split('T')[0];
+    const progress = await db.queryOne(
+      `SELECT speaking_duration_seconds, roleplay_duration_seconds FROM daily_progress
+       WHERE user_id = $1 AND progress_date = $2`,
+      [userId, today]
+    );
+
+    if (sessionType === 'practice') {
+      const used = parseInt(progress?.speaking_duration_seconds || 0);
+      const cap = planType === 'Pro' ? PRACTICE_CAP_PRO : PRACTICE_CAP_BASIC;
+      if (used >= cap) {
+        throw new ValidationError(`Practice session daily limit (${cap / 60} minutes) has been reached`);
+      }
+    }
+
+    if (sessionType === 'roleplay') {
+      const used = parseInt(progress?.roleplay_duration_seconds || 0);
+      const cap = planType === 'Pro' ? ROLEPLAY_CAP_PRO : ROLEPLAY_CAP_BASIC;
+      if (used >= cap) {
+        throw new ValidationError(`Roleplay session daily limit (${cap / 60} minutes) has been reached`);
+      }
+    }
+  },
+
   /**
    * Get connection details for a LiveKit session
    * @param {Object} params - Request parameters
@@ -42,6 +106,10 @@ const livekitConnectionService = {
     const roomName = generateRoomName(userId);
     const topic = extractTopicData(params);
     const ttlMinutes = params.ttlMinutes || DEFAULT_TTL_MINUTES;
+
+    // Validate time limits before issuing token
+    console.log(`⏱️ [LiveKit Service] Checking time limits for user ${userId} | sessionType: ${sessionType}`);
+    await this.validateTimeLimit(userId, sessionType);
 
     // Build metadata
     const metadata = buildSessionMetadata(userId, topic, { sessionType, ...params });

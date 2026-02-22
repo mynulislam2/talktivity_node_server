@@ -64,7 +64,7 @@ const callService = {
 
     // Calculate lifetime call information
     const totalDuration = parseInt(stats?.total_duration_seconds || 0);
-    const LIFETIME_CALL_LIMIT = 300; // 5 minutes in seconds
+    const LIFETIME_CALL_LIMIT = 120; // 2 minutes in seconds
     const remaining = Math.max(0, LIFETIME_CALL_LIMIT - totalDuration);
     const canCall = totalDuration < LIFETIME_CALL_LIMIT;
 
