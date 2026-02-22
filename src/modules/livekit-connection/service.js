@@ -41,7 +41,8 @@ const livekitConnectionService = {
 
     // Practice/roleplay: check daily limits
     const subscription = await db.queryOne(
-      `SELECT s.plan_type FROM subscriptions s
+      `SELECT sp.plan_type FROM subscriptions s
+       JOIN subscription_plans sp ON s.plan_id = sp.id
        WHERE s.user_id = $1 AND s.status = 'active' AND s.end_date > NOW()`,
       [userId]
     );
