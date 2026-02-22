@@ -98,12 +98,12 @@ const subscriptionsService = {
       throw new NotFoundError('Free trial plan not found');
     }
 
-    // Calculate 7 day expiry
+    // Calculate 3 day expiry
     const startDate = new Date();
     const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 7);
+    endDate.setDate(endDate.getDate() + 3);
 
-    console.log(`[SubscriptionsService] Activating 7-day free trial for user ${userId}. Plan ID: ${freetPlan.id}, Expiry: ${endDate}`);
+    console.log(`[SubscriptionsService] Activating 3-day free trial for user ${userId}. Plan ID: ${freetPlan.id}, Expiry: ${endDate}`);
 
     const subscription = await db.queryOne(
       `INSERT INTO subscriptions (user_id, plan_id, status, is_free_trial, start_date, end_date, created_at, updated_at)

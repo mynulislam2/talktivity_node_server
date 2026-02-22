@@ -20,7 +20,7 @@ const callService = {
     );
 
     const totalDuration = parseInt(result?.total_duration || 0);
-    const LIFETIME_CALL_LIMIT = 300; // 5 minutes in seconds
+    const LIFETIME_CALL_LIMIT = 120; // 2 minutes in seconds
     return totalDuration < LIFETIME_CALL_LIMIT;
   },
 

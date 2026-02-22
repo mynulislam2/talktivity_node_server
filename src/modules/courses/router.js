@@ -25,7 +25,7 @@ router.get('/get-active', authenticateToken, coursesController.getCourseStatus);
 // Protected: Check and create next batch
 router.post('/check-and-create-next-batch', authenticateToken, coursesController.checkAndCreateNextBatch);
 
-// Protected: Get full course timeline (12 weeks) with per-day progress merged
+// Protected: Get full course timeline (8 weeks) with per-day progress merged
 router.get('/timeline', authenticateToken, coursesController.getCourseTimeline);
 
 module.exports = router;

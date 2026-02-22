@@ -14,7 +14,7 @@ const { getUtcToday, toUtcMidnight, calculateCourseProgress } = require('../../u
 
 const coursesService = {
   /**
-   * Initialize a new 12-week course for user
+   * Initialize a new 8-week course for user
    * Requires onboarding data and generates personalized topics
    */
   async initializeUserCourse(userId) {
@@ -138,7 +138,7 @@ const coursesService = {
       // Use UTC dates for course start/end
       const startDate = new Date(getUtcToday() + 'T00:00:00.000Z');
       const endDate = new Date(startDate);
-      endDate.setUTCDate(endDate.getUTCDate() + 84); // 12 weeks * 7 days
+      endDate.setUTCDate(endDate.getUTCDate() + 56); // 8 weeks * 7 days
 
       const conversationResult = await client.query(
         'SELECT transcript FROM conversations WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 5',
@@ -263,8 +263,8 @@ const coursesService = {
           id: course.id,
           currentWeek,
           currentDay,
-          totalWeeks: 12,
-          totalDays: 84,
+          totalWeeks: 8,
+          totalDays: 56,
           batchNumber: course.batch_number || 1,
           batchStatus: course.batch_status ? {
             action: course.batch_status.action,
@@ -281,7 +281,7 @@ const coursesService = {
   },
 
   /**
-   * Get full 12-week course timeline with per-day progress merged from daily_progress
+   * Get full 8-week course timeline with per-day progress merged from daily_progress
    * Used by: GET /api/courses/timeline?date=YYYY-MM-DD
    * If date omitted, uses PostgreSQL CURRENT_DATE
    */
@@ -300,7 +300,7 @@ const coursesService = {
       const course = courseResult.rows[0];
       const courseStart = new Date(course.course_start_date);
 
-      const totalWeeks = 12;
+      const totalWeeks = 8;
       const totalDays = totalWeeks * 7;
 
       // Fetch all daily_progress rows for the course window in one query
@@ -520,7 +520,7 @@ const coursesService = {
     // Calculate current week and day using UTC helper (consistent, no timezone issues)
     const { week: currentWeek, day: currentDay } = calculateCourseProgress(courseStartStr);
 
-    const TOTAL_COURSE_WEEKS = 12;
+    const TOTAL_COURSE_WEEKS = 8;
     const isFirstDayOfNewWeek = currentDay === 1 && currentWeek > 1;
     const batchNumber = course.batch_number || 1;
     const isBatchBehind = batchNumber < currentWeek;
@@ -538,7 +538,7 @@ const coursesService = {
     if (currentWeek >= TOTAL_COURSE_WEEKS) {
       return {
         success: true,
-        message: 'Congratulations! You have completed the full 3-month course!',
+        message: 'Congratulations! You have completed the 8-week course!',
         currentWeek,
         currentDay,
       };

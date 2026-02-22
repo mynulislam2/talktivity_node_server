@@ -9,11 +9,15 @@ SESSION_TYPE_PRACTICE = "practice"
 SESSION_TYPE_ROLEPLAY = "roleplay"
 SUPPORTED_SESSION_TYPES = {SESSION_TYPE_CALL, SESSION_TYPE_PRACTICE, SESSION_TYPE_ROLEPLAY}
 
+# FREE TRIAL CONFIGURATION
+FREE_TRIAL_DURATION_DAYS = 3  # Free trial valid for 3 days
+
 # Time Limits (in seconds)
-CALL_LIFETIME_LIMIT_SECONDS = 5 * 60  # 5 minutes lifetime for call
-PRACTICE_DAILY_CAP_SECONDS = 5 * 60   # 5 minutes per day for practice
-ROLEPLAY_BASIC_CAP_SECONDS = 5 * 60   # 5 minutes per day for Basic plan
-ROLEPLAY_PRO_CAP_SECONDS = 55 * 60    # 55 minutes per day for Pro plan
+CALL_LIFETIME_LIMIT_SECONDS = 2 * 60  # 2 minutes lifetime for test call
+PRACTICE_DAILY_CAP_SECONDS = 5 * 60   # 5 minutes per day for practice (Basic/FreeTrial)
+PRACTICE_PRO_CAP_SECONDS = 10 * 60    # 10 minutes per day for practice (Pro)
+ROLEPLAY_BASIC_CAP_SECONDS = 5 * 60   # 5 minutes per day for Basic plan (separate from practice)
+ROLEPLAY_PRO_CAP_SECONDS = 10 * 60    # 10 minutes per day for Pro plan (separate from practice)
 
 # Session State Events
 SESSION_STATE_SAVING = "SAVING_CONVERSATION"

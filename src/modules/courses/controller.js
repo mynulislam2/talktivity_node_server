@@ -113,7 +113,7 @@ const coursesController = {
   },
 
   /**
-   * Get full course timeline (12 weeks) with per-day progress merged from daily_progress
+   * Get full course timeline (8 weeks) with per-day progress merged from daily_progress
    * GET /api/courses/timeline?date=YYYY-MM-DD
    */
   async getCourseTimeline(req, res) {
