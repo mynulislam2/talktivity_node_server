@@ -16,6 +16,14 @@ app.set('trust proxy', 1);
 // Security headers
 app.use(securityHeaders);
 
+// Add COOP header for Google OAuth popup support
+// Allows the popup to communicate with the parent window
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', process.env.COOP_HEADER || 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Embedder-Policy', process.env.CORE_POLICY || 'require-corp');
+  next();
+});
+
 // Global rate limiter
 app.use(globalLimiter);
 
