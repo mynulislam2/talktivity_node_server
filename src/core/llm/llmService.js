@@ -7,8 +7,8 @@ const axios = require('axios');
 const { reportPrompt, quizEvaluationPrompt, listeningQuizPrompt, quizGenerationPrompt, listeningQuizGenerationPrompt, courseGenerationPrompt, dailyReportPrompt } = require('../../constants/prompts');
 
 const LLM_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_PRIMARY = 'openai/gpt-oss-120b';
-const MODEL_FALLBACK = 'openai/gpt-oss-120b';
+const MODEL_PRIMARY = process.env.GROQ_MODEL_REPORT || 'llama-3.1-70b-versatile';
+const MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || 'llama-3.3-70b-versatile';
 
 async function callGroq(prompt, messages, timeout = 60000, maxTokens = 16384) {
   const apiKey = process.env.GROQ_API_KEY;
