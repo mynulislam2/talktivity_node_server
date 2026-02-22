@@ -98,7 +98,7 @@ const paymentService = {
 
     // Create or update subscription
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.billing_cycle_days);
+    endDate.setDate(endDate.getDate() + plan.duration_days);
 
     const subscription = await db.queryOne(
       `INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, payment_id, created_at, updated_at)
