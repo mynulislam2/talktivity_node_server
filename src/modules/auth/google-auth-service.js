@@ -113,6 +113,11 @@ async function exchangeGoogleCode(code) {
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
       redirect_uri: process.env.GOOGLE_REDIRECT_URI,
       grant_type: 'authorization_code',
+    }, {
+      headers: {
+        'User-Agent': 'Talktivity-Backend/1.0 (+https://talktivity.app)',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      }
     });
 
     const { access_token } = tokenResponse.data;
@@ -125,7 +130,10 @@ async function exchangeGoogleCode(code) {
 
     // Get user info from Google
     const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: `Bearer ${access_token}` },
+      headers: { 
+        'Authorization': `Bearer ${access_token}`,
+        'User-Agent': 'Talktivity-Backend/1.0 (+https://talktivity.app)',
+      },
     });
 
     const { email, name, picture, id: googleId } = userInfoResponse.data;
