@@ -35,7 +35,7 @@ const callService = {
         SUM(CAST(COALESCE(call_duration_seconds, 0) AS INTEGER)) as total_duration_seconds,
         AVG(CAST(COALESCE(call_duration_seconds, 0) AS INTEGER)) as avg_duration_seconds,
         MAX(call_started_at) as last_call_at,
-        COUNT(CASE WHEN call_duration_seconds >= 300 THEN 1 END) as full_sessions
+        COUNT(CASE WHEN call_duration_seconds >= 120 THEN 1 END) as full_sessions
       FROM call_sessions
       WHERE user_id = $1`,
       [userId]
