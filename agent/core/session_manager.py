@@ -139,7 +139,7 @@ class SessionManager:
             # Use a stable, generally available Gemini model compatible with v1beta generateContent
             model="gemini-2.0-flash",
             temperature=1,
-            vertexai=False,
+            vertexai=True,
             api_key=google_api_key if google_api_key else None,
         )
 
@@ -151,7 +151,10 @@ class SessionManager:
                 voice_name="en-US-Chirp3-HD-Kore",
                 language="en-US",
                 sample_rate=24000,
+                speaking_rate=0.8,
+                
             ),
+            
             turn_detection=EnglishModel(),
             allow_interruptions=True,
             min_endpointing_delay=0.1,

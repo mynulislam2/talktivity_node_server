@@ -522,9 +522,15 @@ const coursesService = {
 
     const TOTAL_COURSE_WEEKS = 12;
     const isFirstDayOfNewWeek = currentDay === 1 && currentWeek > 1;
+    const batchNumber = course.batch_number || 1;
+    const isBatchBehind = batchNumber < currentWeek;
 
-    // If it's the first day of a new week and not the final week, generate next batch
-    if (isFirstDayOfNewWeek && currentWeek < TOTAL_COURSE_WEEKS) {
+    // If it's the first day of a new week OR batch is behind current week, generate next batch
+    if ((isFirstDayOfNewWeek || isBatchBehind) && currentWeek < TOTAL_COURSE_WEEKS) {
+      console.log(
+        `[Batch] Triggering batch generation. isFirstDayOfNewWeek: ${isFirstDayOfNewWeek}, ` +
+        `isBatchBehind: ${isBatchBehind} (batchNumber: ${batchNumber}, currentWeek: ${currentWeek})`
+      );
       return await this.generateNextBatch(userId);
     }
 
@@ -539,11 +545,17 @@ const coursesService = {
     }
 
     // Otherwise, no batch action needed yet
+    console.log(
+      `[Batch] No action needed. batchNumber: ${batchNumber}, currentWeek: ${currentWeek}, ` +
+      `currentDay: ${currentDay}, isFirstDayOfNewWeek: ${isFirstDayOfNewWeek}`
+    );
     return {
       success: true,
       message: 'No batch action needed at this time',
       currentWeek,
       currentDay,
+      batchNumber,
+      isBatchBehind,
       nextBatchTriggerDay: (7 - currentDay) + 1,
     };
   },
