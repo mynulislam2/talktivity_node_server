@@ -24,9 +24,10 @@ async def test_postgres_connection():
         logger.exception("❌ Failed to connect to PostgreSQL")
 
 
-CALL_LIFETIME_LIMIT_SECONDS = 5 * 60
-PRACTICE_CAP_SECONDS = 5 * 60
-ROLEPLAY_CAP_PRO_SECONDS = 55 * 60
+CALL_LIFETIME_LIMIT_SECONDS = 2 * 60
+PRACTICE_CAP_BASIC_SECONDS = 5 * 60
+PRACTICE_CAP_PRO_SECONDS = 10 * 60
+ROLEPLAY_CAP_PRO_SECONDS = 10 * 60
 ROLEPLAY_CAP_BASIC_SECONDS = 5 * 60
 
 
@@ -47,7 +48,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
 
         session_type = (session_type or "call").lower()
 
-        # Call sessions use lifetime 5m cap for all users
+        # Call sessions use lifetime 2 min cap for all users
         if session_type == "call":
             lifetime_query = """
                 SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds 
@@ -84,7 +85,7 @@ async def check_daily_time_limit(user_id: int, session_type: str) -> bool:
         )
 
         plan_type = subscription["plan_type"]
-        practice_cap = PRACTICE_CAP_SECONDS
+        practice_cap = PRACTICE_CAP_PRO_SECONDS if plan_type == "Pro" else PRACTICE_CAP_BASIC_SECONDS
         roleplay_cap = (
             ROLEPLAY_CAP_BASIC_SECONDS
             if plan_type in ("FreeTrial", "Basic") or is_free_trial
@@ -175,7 +176,7 @@ async def get_remaining_time_during_call(
         )
 
         # Caps per type
-        practice_cap = PRACTICE_CAP_SECONDS
+        practice_cap = PRACTICE_CAP_PRO_SECONDS if plan_type == "Pro" else PRACTICE_CAP_BASIC_PRO_SECONDS if plan_type == "Pro" else PRACTICE_CAP_BASIC_SECONDS
         if plan_type == "Pro":
             roleplay_cap = ROLEPLAY_CAP_PRO_SECONDS
         elif plan_type in ("FreeTrial", "Basic") or is_free_trial:

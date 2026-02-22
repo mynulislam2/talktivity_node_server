@@ -114,14 +114,15 @@ const progressService = {
       const planType = subStatus?.subscription?.plan_type || null;
 
       // Match Python agent caps (see agent/config/constants.py)
-      const PRACTICE_DAILY_CAP_SECONDS = 5 * 60;   // 5 minutes per day for practice
-      const ROLEPLAY_BASIC_CAP_SECONDS = 5 * 60;   // 5 minutes per day for Basic/FreeTrial
-      const ROLEPLAY_PRO_CAP_SECONDS = 55 * 60;    // 55 minutes per day for Pro
+      const PRACTICE_BASIC_CAP_SECONDS = 5 * 60;   // 5 minutes per day for Basic/FreeTrial practice
+      const PRACTICE_PRO_CAP_SECONDS = 10 * 60;    // 10 minutes per day for Pro practice
+      const ROLEPLAY_BASIC_CAP_SECONDS = 5 * 60;   // 5 minutes per day for Basic/FreeTrial roleplay
+      const ROLEPLAY_PRO_CAP_SECONDS = 10 * 60;    // 10 minutes per day for Pro roleplay
 
       const speakingUsed = progress?.speaking_duration_seconds || 0;
       const roleplayUsed = progress?.roleplay_duration_seconds || 0;
 
-      const practiceCap = PRACTICE_DAILY_CAP_SECONDS;
+      const practiceCap = planType === 'Pro' ? PRACTICE_PRO_CAP_SECONDS : PRACTICE_BASIC_CAP_SECONDS;
       const roleplayCap =
         planType === 'Pro' ? ROLEPLAY_PRO_CAP_SECONDS : ROLEPLAY_BASIC_CAP_SECONDS;
 

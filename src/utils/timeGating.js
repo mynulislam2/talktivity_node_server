@@ -7,12 +7,14 @@ const db = require('../core/db/client');
 const { ValidationError } = require('../core/error/errors');
 
 // Daily pool limits (in seconds)
+// NOTE: Practice and roleplay have INDEPENDENT daily caps
+// - Basic/FreeTrial: 5 min practice + 5 min roleplay (separate)
+// - Pro: 10 min practice + 10 min roleplay (separate)
 const DAILY_LIMITS = {
-  practice: 5 * 60, // 300 seconds
-  roleplay_basic: 5 * 60, // 300 seconds for Basic/FreeTrial
-  roleplay_pro: 55 * 60, // 3300 seconds for Pro
-  total_basic: 5 * 60, // 300 seconds for Basic/FreeTrial
-  total_pro: 60 * 60, // 3600 seconds for Pro
+  practice_basic: 5 * 60, // 5 minutes per day for Basic/FreeTrial practice
+  practice_pro: 10 * 60, // 10 minutes per day for Pro practice
+  roleplay_basic: 5 * 60, // 5 minutes per day for Basic/FreeTrial roleplay
+  roleplay_pro: 10 * 60, // 10 minutes per day for Pro roleplay
 };
 
 const LIFETIME_LIMITS = {
@@ -20,24 +22,23 @@ const LIFETIME_LIMITS = {
 };
 
 /**
- * Get remaining time for practice session
+ * Get remaining time for practice session (plan-aware)
  */
-async function getRemainingPracticeTime(userId) {
+async function getRemainingPracticeTime(userId, planType) {
   const today = new Date().toISOString().split('T')[0];
 
   const result = await db.queryOne(
-    `SELECT COALESCE(COUNT(*), 0) as practice_count
+    `SELECT COALESCE(SUM(CAST(COALESCE(speaking_duration_seconds, 0) AS INTEGER)), 0) as practice_total
      FROM daily_progress
-     WHERE user_id = $1 AND progress_date = $2 AND speaking_completed = true`,
+     WHERE user_id = $1 AND progress_date = $2`,
     [userId, today]
   );
 
-  const usedCount = result?.practice_count || 0;
-  // Each speaking session counts as using 300 seconds from daily limit
-  const usedSeconds = usedCount * 300;
-  const remainingSeconds = Math.max(0, DAILY_LIMITS.practice - usedSeconds);
+  const usedSeconds = result?.practice_total || 0;
+  const limitSeconds = planType === 'Pro' ? DAILY_LIMITS.practice_pro : DAILY_LIMITS.practice_basic;
+  const remainingSeconds = Math.max(0, limitSeconds - usedSeconds);
 
-  return { usedSeconds, remainingSeconds, limitSeconds: DAILY_LIMITS.practice };
+  return { usedSeconds, remainingSeconds, limitSeconds };
 }
 
 /**
@@ -63,8 +64,8 @@ async function getRemainingRoleplayTime(userId, planType) {
 /**
  * Check if user can start a practice session
  */
-async function canStartPracticeSession(userId) {
-  const { remainingSeconds } = await getRemainingPracticeTime(userId);
+async function canStartPracticeSession(userId, planType) {
+  const { remainingSeconds } = await getRemainingPracticeTime(userId, planType);
   return remainingSeconds > 0;
 }
 
@@ -88,7 +89,7 @@ async function canUseLifetimeCall(userId) {
  * Calculate TTL in minutes for LiveKit token
  * Token expires after (remaining_seconds / 60) minutes
  */
-async function calculateTokenTTL(userId, sessionType) {
+async function calculateTokenTTL(userId, sessionType, planType = 'Basic') {
   try {
     if (sessionType === 'call') {
       const { remainingSeconds } = await getRemainingLifetimeCallTime(userId);
@@ -98,12 +99,12 @@ async function calculateTokenTTL(userId, sessionType) {
     }
 
     if (sessionType === 'practice') {
-      const { remainingSeconds } = await getRemainingPracticeTime(userId);
+      const { remainingSeconds } = await getRemainingPracticeTime(userId, planType);
       return Math.floor(remainingSeconds / 60);
     }
 
     // Default roleplay (will be plan-specific at call time)
-    const { remainingSeconds } = await getRemainingRoleplayTime(userId, 'Basic');
+    const { remainingSeconds } = await getRemainingRoleplayTime(userId, planType);
     return Math.floor(remainingSeconds / 60);
   } catch (error) {
     console.error('Error calculating TTL:', error);

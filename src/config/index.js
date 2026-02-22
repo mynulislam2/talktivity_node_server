@@ -44,10 +44,11 @@ const config = {
 
   // Time Limits (in seconds)
   TIME_LIMITS: {
-    DAILY_PRACTICE: parseInt(process.env.DAILY_PRACTICE_SECONDS || '300'), // 5 min
-    DAILY_ROLEPLAY_BASIC: parseInt(process.env.DAILY_ROLEPLAY_BASIC_SECONDS || '300'), // 5 min
-    DAILY_ROLEPLAY_PRO: parseInt(process.env.DAILY_ROLEPLAY_PRO_SECONDS || '3300'), // 55 min
-    LIFETIME_ONBOARDING: parseInt(process.env.LIFETIME_ONBOARDING_SECONDS || '300'), // 5 min
+    DAILY_PRACTICE_BASIC: parseInt(process.env.DAILY_PRACTICE_BASIC_SECONDS || '300'), // 5 min for Basic/FreeTrial
+    DAILY_PRACTICE_PRO: parseInt(process.env.DAILY_PRACTICE_PRO_SECONDS || '600'), // 10 min for Pro
+    DAILY_ROLEPLAY_BASIC: parseInt(process.env.DAILY_ROLEPLAY_BASIC_SECONDS || '300'), // 5 min for Basic/FreeTrial
+    DAILY_ROLEPLAY_PRO: parseInt(process.env.DAILY_ROLEPLAY_PRO_SECONDS || '600'), // 10 min for Pro
+    LIFETIME_ONBOARDING: parseInt(process.env.LIFETIME_ONBOARDING_SECONDS || '120'), // 2 min test call
   },
 
   // OAuth (Optional)
