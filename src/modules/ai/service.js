@@ -39,7 +39,6 @@ Return only a valid JSON object with "prompt" and "firstPrompt" fields.`;
         ],
         temperature: 0.7,
         max_tokens: 100000,
-        response_format: { type: 'json_object' },
       };
 
       const content = await llmService.callGroqRaw(payload);
