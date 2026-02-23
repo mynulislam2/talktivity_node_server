@@ -125,7 +125,7 @@ const generateReportWithGroq = async (transcriptData, useFallback = false) => {
         };
 
         // Use environment variable for model, with fallback to reliable Groq models
-        const GROQ_MODEL_REPORT = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "llama-3.1-70b-versatile";
+        const GROQ_MODEL_REPORT = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "mixtral-8x7b-32768";
         const GROQ_MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || "llama-3.3-70b-versatile";
 
         // Use fallback model if requested (for retry scenarios)

@@ -4,10 +4,10 @@
  */
 
 const axios = require('axios');
-const { reportPrompt, quizEvaluationPrompt, listeningQuizPrompt, quizGenerationPrompt, listeningQuizGenerationPrompt, courseGenerationPrompt, dailyReportPrompt } = require('../../constants/prompts');
+const { reportPrompt, quizEvaluationPrompt, listeningQuizPrompt, quizGenerationPrompt, listeningQuizGenerationPrompt, courseGenerationPrompt, dailyReportPrompt, roleplayGenerationPrompt } = require('../../constants/prompts');
 
 const LLM_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_PRIMARY = process.env.GROQ_MODEL_REPORT || 'llama-3.1-70b-versatile';
+const MODEL_PRIMARY = process.env.GROQ_MODEL_REPORT || process.env.MODEL_REPORT || "mixtral-8x7b-32768";
 const MODEL_FALLBACK = process.env.GROQ_MODEL_FALLBACK || 'llama-3.3-70b-versatile';
 
 async function callGroq(prompt, messages, timeout = 60000, maxTokens = 16384) {
@@ -96,8 +96,9 @@ async function callGroq(prompt, messages, timeout = 60000, maxTokens = 16384) {
     // Fallback attempt
     try {
       console.log('[LLM Service] Attempting fallback with model:', MODEL_FALLBACK);
-      // Increase max_tokens for fallback to give more room
-      const fallbackPayload = { ...payload, model: MODEL_FALLBACK, max_tokens: Math.max(maxTokens * 2, 32768) };
+      // For fallback model, cap max_tokens at safe limit (32768 for llama-3.3-70b)
+      const fallbackMaxTokens = Math.min(maxTokens, 32768);
+      const fallbackPayload = { ...payload, model: MODEL_FALLBACK, max_tokens: fallbackMaxTokens };
       const { data } = await axios.post(LLM_API_URL, fallbackPayload, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -368,6 +369,16 @@ const llmService = {
     };
     // Returns JSON array of 7 topic objects
     return await this.run('courseGenerate', payload);
+  },
+
+  async generateRolePlayScenario(myRole, otherRole, situation) {
+    const messages = [
+      { 
+        role: 'user', 
+        content: `Generate a roleplay scenario where:\n- I am playing the role of: ${myRole}\n- You (the AI) are playing the role of: ${otherRole}\n- The situation is: ${situation}\n\nReturn only a valid JSON object with "prompt" and "firstPrompt" fields.`
+      },
+    ];
+    return await callGroq(roleplayGenerationPrompt, messages, 60000, 4096);
   },
 };
 

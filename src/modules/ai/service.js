@@ -11,74 +11,7 @@ const aiService = {
    * Generate roleplay scenario prompts
    */
   async generateRolePlayScenario(myRole, otherRole, situation) {
-    const systemPrompt = `You are an expert English language learning assistant. Your task is to create engaging and realistic roleplay scenarios for English practice.
-
-Generate a roleplay scenario based on the following details:
-- User's Role: ${myRole}
-- AI's Role: ${otherRole}
-- Situation: ${situation}
-
-You must return a JSON object with exactly two fields:
-1. "prompt": A detailed system prompt for the AI assistant that sets up the roleplay scenario. This should be 2-3 sentences that describe the context, the AI's role, and how the AI should behave.
-2. "firstPrompt": The first message the AI should say to start the conversation. This should be natural, engaging, and appropriate for the scenario.
-
-Make the scenario realistic, engaging, and suitable for English practice. The prompts should encourage natural conversation.`;
-
-    const userMessage = `Generate a roleplay scenario where:
-- I am playing the role of: ${myRole}
-- You (the AI) are playing the role of: ${otherRole}
-- The situation is: ${situation}
-
-Return only a valid JSON object with "prompt" and "firstPrompt" fields.`;
-
-    try {
-      const payload = {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-        temperature: 0.7,
-        max_tokens: 100000,
-      };
-
-      const content = await llmService.callGroqRaw(payload);
-      
-      // Parse JSON response robustly. Groq with response_format:'json_object' should
-      // already return pure JSON, but keep a fallback for older formats.
-      let parsed;
-      try {
-        parsed = JSON.parse(content);
-      } catch (primaryError) {
-        // Legacy fallback: strip markdown fences / extra text and retry
-        let jsonString = content;
-        if (jsonString.includes('```json')) {
-          jsonString = jsonString.split('```json')[1] || jsonString;
-        } else if (jsonString.includes('```')) {
-          jsonString = jsonString.split('```')[1] || jsonString;
-        }
-
-        const startIndex = jsonString.indexOf('{');
-        const endIndex = jsonString.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-          throw new Error('AI returned malformed JSON');
-        }
-        jsonString = jsonString.substring(startIndex, endIndex + 1);
-        parsed = JSON.parse(jsonString);
-      }
-
-      // Validate structure
-      if (!parsed.prompt || !parsed.firstPrompt) {
-        throw new Error('AI response missing required fields: prompt and firstPrompt');
-      }
-
-      return {
-        prompt: parsed.prompt,
-        firstPrompt: parsed.firstPrompt,
-      };
-    } catch (error) {
-      console.error('[AI Service] Error generating roleplay:', error);
-      throw new Error(`Failed to generate roleplay scenario: ${error.message}`);
-    }
+    return await llmService.generateRolePlayScenario(myRole, otherRole, situation);
   },
 
   /**
