@@ -18,7 +18,7 @@ const DAILY_LIMITS = {
 };
 
 const LIFETIME_LIMITS = {
-  onboarding: 5 * 60, // 300 seconds (one test call)
+  onboarding: 2 * 60, // 120 seconds (matches LIFETIME_CALL_LIMIT in call/service.js)
 };
 
 /**
@@ -78,6 +78,25 @@ async function canStartRoleplaySession(userId, planType) {
 }
 
 /**
+ * Get remaining lifetime call time for a user
+ * Checks total call_duration_seconds across all call_sessions
+ */
+async function getRemainingLifetimeCallTime(userId) {
+  const result = await db.queryOne(
+    `SELECT COALESCE(SUM(call_duration_seconds), 0) as total_duration
+     FROM call_sessions
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  const usedSeconds = result?.total_duration || 0;
+  const limitSeconds = LIFETIME_LIMITS.onboarding;
+  const remainingSeconds = Math.max(0, limitSeconds - usedSeconds);
+
+  return { usedSeconds, remainingSeconds, limitSeconds };
+}
+
+/**
  * Check if onboarding user can use lifetime pool
  */
 async function canUseLifetimeCall(userId) {
@@ -117,6 +136,7 @@ module.exports = {
   LIFETIME_LIMITS,
   getRemainingPracticeTime,
   getRemainingRoleplayTime,
+  getRemainingLifetimeCallTime,
   canStartPracticeSession,
   canStartRoleplaySession,
   canUseLifetimeCall,
