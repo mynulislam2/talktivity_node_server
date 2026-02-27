@@ -12,6 +12,7 @@
 const db = require('../../core/db/client');
 const { ValidationError, NotFoundError } = require('../../core/error/errors');
 const discountTokenService = require('../discount-tokens/service');
+const emailService = require('../../core/services/email');
 let Payment;
 try {
   ({ Payment } = require('aamarpay.v2'));
@@ -112,6 +113,33 @@ const paymentService = {
     // Update lifecycle: mark upgrade as completed
     const lifecycleService = require('../user-lifecycle/service');
     await lifecycleService.updateLifecycleState(userId, { upgrade_completed: true });
+
+    // Send payment confirmation email
+    try {
+      const user = await db.queryOne(
+        `SELECT email, full_name FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (user && user.email) {
+        const emailResult = await emailService.sendPaymentConfirmation(user.email, {
+          userName: user.full_name || 'User',
+          planName: plan.plan_type || 'Pro',
+          amount: transaction.amount,
+          transactionId: transactionReference || transaction.transaction_id,
+          billingPeriod: `${plan.duration_days} days`,
+        });
+
+        if (!emailResult.success) {
+          console.error(`[PaymentService] Failed to send payment confirmation email:`, emailResult.error);
+        } else {
+          console.log(`[PaymentService] Payment confirmation email sent to ${user.email}`);
+        }
+      }
+    } catch (emailError) {
+      // Don't fail the payment if email fails
+      console.error('[PaymentService] Error sending payment confirmation email:', emailError.message);
+    }
 
     return { transaction, subscription };
   },

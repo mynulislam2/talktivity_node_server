@@ -27,4 +27,29 @@ const groupLimiter = rateLimit({
   max: 60,
 });
 
-module.exports = { globalLimiter, authLimiter, adminLimiter, groupLimiter };
+/**
+ * Email Rate Limiter
+ * Strict rate limit for email-sending endpoints (forgot password, verification)
+ * 3 requests per 15 minutes to prevent abuse
+ */
+const emailRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // 3 requests per window
+  message: {
+    success: false,
+    error: 'Too many requests. Please try again in 15 minutes.',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV === 'test',
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: 'Too many requests. Please try again in 15 minutes.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    });
+  },
+});
+
+module.exports = { globalLimiter, authLimiter, adminLimiter, groupLimiter, emailRateLimiter };

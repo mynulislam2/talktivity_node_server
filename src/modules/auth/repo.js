@@ -73,6 +73,70 @@ const authRepo = {
       [token]
     );
   },
+
+  // ==========================================
+  // Password Reset Methods
+  // ==========================================
+
+  async getUserByEmailWithResetCode(email) {
+    return await db.queryOne(
+      `SELECT id, email, full_name, password_reset_code, password_reset_code_expiry 
+       FROM users WHERE email = $1`,
+      [email]
+    );
+  },
+
+  async setPasswordResetCode(userId, code, expiryTime) {
+    return await db.query(
+      `UPDATE users SET password_reset_code = $1, password_reset_code_expiry = $2, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $3`,
+      [code, expiryTime, userId]
+    );
+  },
+
+  async clearPasswordResetCode(userId) {
+    return await db.query(
+      `UPDATE users SET password_reset_code = NULL, password_reset_code_expiry = NULL, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [userId]
+    );
+  },
+
+  async updatePassword(userId, hashedPassword) {
+    return await db.query(
+      `UPDATE users SET password = $1, password_reset_code = NULL, password_reset_code_expiry = NULL, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2`,
+      [hashedPassword, userId]
+    );
+  },
+
+  // ==========================================
+  // Email Verification Methods
+  // ==========================================
+
+  async getUserByIdWithVerification(userId) {
+    return await db.queryOne(
+      `SELECT id, email, full_name, verification_code, verification_code_expiry, email_verified_at 
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+  },
+
+  async setVerificationCode(userId, code, expiryTime) {
+    return await db.query(
+      `UPDATE users SET verification_code = $1, verification_code_expiry = $2, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $3`,
+      [code, expiryTime, userId]
+    );
+  },
+
+  async markEmailVerified(userId) {
+    return await db.query(
+      `UPDATE users SET email_verified_at = CURRENT_TIMESTAMP, verification_code = NULL, verification_code_expiry = NULL, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [userId]
+    );
+  },
 };
 
 module.exports = authRepo;
