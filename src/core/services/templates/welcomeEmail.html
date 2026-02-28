@@ -1,203 +1,146 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Welcome to Talktivity</title>
-
-  <style>
-    html, body { margin:0 !important; padding:0 !important; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-      background-color: #0b0f19;
-      color: #e5e7eb;
-    }
-
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 40px 20px;
-    }
-
-    .top-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 30px;
-    }
-
-    .brand {
-      font-size: 16px;
-      font-weight: 700;
-    }
-
-    .right-label {
-      font-size: 12px;
-      color: #9ca3af;
-    }
-
-    h1 {
-      font-size: 24px;
-      margin: 0 0 16px 0;
-      font-weight: 700;
-    }
-
-    p {
-      font-size: 15px;
-      line-height: 1.6;
-      color: #9ca3af;
-      margin: 0 0 18px 0;
-    }
-
-    .welcome-box {
-      margin: 24px 0;
-      padding: 18px 20px;
-      background: rgba(124,58,237,0.08);
-
-      border-radius: 6px;
-      font-size: 14px;
-      color: #e5e7eb;
-    }
-
-    .section-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin: 30px 0 16px 0;
-      color: #e5e7eb;
-    }
-
-    .step {
-      margin-bottom: 20px;
-    }
-
-    .step-number {
-      font-size: 12px;
-      font-weight: 700;
-      color: #7c3aed;
-      margin-bottom: 4px;
-    }
-
-    .step-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 4px;
-      color: #ffffff;
-    }
-
-    .step-desc {
-      font-size: 13px;
-      color: #9ca3af;
-      line-height: 1.5;
-    }
-
-    .cta-section {
-      margin-top: 32px;
-    }
-
-    .cta-button {
-      display: inline-block;
-      background: #7c3aed;
-      color: #ffffff;
-      padding: 14px 28px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      text-decoration: none;
-    }
-
-    .divider {
-      height: 1px;
-      background: rgba(255,255,255,.08);
-      margin: 32px 0;
-    }
-
-    .footer {
-      font-size: 12px;
-      color: #9ca3af;
-      line-height: 1.6;
-    }
-
-    .footer a {
-      color: #ffffff;
-      font-weight: 600;
-      text-decoration: none;
-    }
-
-    @media screen and (max-width: 600px) {
-      .container { padding: 24px 18px; }
-    }
-  </style>
 </head>
 
-<body>
+<body style="margin:0; padding:0; background:#0b0f19;">
 
   <!-- Hidden preview text -->
   <div style="display:none; font-size:1px; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden;">
-    Welcome to Talktivity, {{userName}}. Complete your profile and start practicing today.
+    Welcome to Talktivity, {{userName}}. Complete your profile and start practicing.
   </div>
 
-  <div class="container">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b0f19;">
+    <tr>
+      <td align="center" style="padding:36px 16px;">
 
-    <div class="top-row">
-      <div class="brand">Talktivity</div>
-      <div class="right-label">Welcome</div>
-    </div>
+        <!-- Container -->
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
 
-    <h1>Welcome to Talktivity, {{userName}}</h1>
+          <!-- Header -->
+          <tr>
+            <td style="padding-bottom:26px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="left" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:16px; font-weight:700; color:#e5e7eb;">
+                    Talktivity
+                  </td>
+                  <td align="right" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:12px; color:#9ca3af; white-space:nowrap;">
+                    Welcome
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-    <div class="welcome-box">
-      We’re excited to have you join our community of English learners.
-      Talktivity helps you improve your speaking skills through real-time AI conversations,
-      daily lessons, quizzes, listening practice, and interactive roleplays.
-    </div>
+          <!-- Title -->
+          <tr>
+            <td style="padding-bottom:16px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:26px; line-height:1.2; font-weight:800; color:#e5e7eb;">
+                Welcome to Talktivity, {{userName}}
+              </div>
+            </td>
+          </tr>
 
-    <div class="section-title">Your journey starts here</div>
+          <!-- Intro -->
+          <tr>
+            <td style="padding-bottom:20px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:15px; line-height:1.7; color:#9ca3af;">
+                We’re excited to have you join our English learning community.
+                Talktivity helps you improve through AI conversations,
+                daily lessons, quizzes, listening practice, and roleplay.
+              </div>
+            </td>
+          </tr>
 
-    <div class="step">
-      <div class="step-number">01</div>
-      <div class="step-title">Finish your profile</div>
-      <div class="step-desc">
-        Set your English level and learning goals. After completing your profile,
-        you’ll land on your Home dashboard.
-      </div>
-    </div>
+          <!-- Section title -->
+          <tr>
+            <td style="padding:20px 0 12px 0;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; font-weight:700; color:#e5e7eb;">
+                Your journey starts here
+              </div>
+            </td>
+          </tr>
 
-    <div class="step">
-      <div class="step-number">02</div>
-      <div class="step-title">Start daily practice</div>
-      <div class="step-desc">
-        Practice speaking, take quizzes, improve listening skills,
-        and complete your daily lessons directly from Home.
-      </div>
-    </div>
+          <!-- Step 1 -->
+          <tr>
+            <td style="padding-bottom:18px;">
+              <div style="color:#7c3aed; font-size:12px; font-weight:700;">01</div>
+              <div style="color:#ffffff; font-size:14px; font-weight:600; margin-top:4px;">
+                Finish your profile
+              </div>
+              <div style="color:#9ca3af; font-size:13px; line-height:1.6; margin-top:4px;">
+                Set your English level and learning goals. After completing your profile,
+                you’ll land on your Home dashboard.
+              </div>
+            </td>
+          </tr>
 
-    <div class="step">
-      <div class="step-number">03</div>
-      <div class="step-title">Try roleplay</div>
-      <div class="step-desc">
-        Choose a topic or generate a custom scenario and start real-time AI conversations.
-      </div>
-    </div>
+          <!-- Step 2 -->
+          <tr>
+            <td style="padding-bottom:18px;">
+              <div style="color:#7c3aed; font-size:12px; font-weight:700;">02</div>
+              <div style="color:#ffffff; font-size:14px; font-weight:600; margin-top:4px;">
+                Start daily practice
+              </div>
+              <div style="color:#9ca3af; font-size:13px; line-height:1.6; margin-top:4px;">
+                Practice speaking, take quizzes, improve listening,
+                and complete your daily lessons.
+              </div>
+            </td>
+          </tr>
 
-    <div class="step">
-      <div class="step-number">04</div>
-      <div class="step-title">Track progress & join the community</div>
-      <div class="step-desc">
-        Monitor your fluency growth and connect with other learners
-        through community conversations.
-      </div>
-    </div>
+          <!-- Step 3 -->
+          <tr>
+            <td style="padding-bottom:18px;">
+              <div style="color:#7c3aed; font-size:12px; font-weight:700;">03</div>
+              <div style="color:#ffffff; font-size:14px; font-weight:600; margin-top:4px;">
+                Try roleplay
+              </div>
+              <div style="color:#9ca3af; font-size:13px; line-height:1.6; margin-top:4px;">
+                Choose a topic or generate a custom scenario and start AI conversations.
+              </div>
+            </td>
+          </tr>
 
-    <div class="divider"></div>
+          <!-- Step 4 -->
+          <tr>
+            <td style="padding-bottom:28px;">
+              <div style="color:#7c3aed; font-size:12px; font-weight:700;">04</div>
+              <div style="color:#ffffff; font-size:14px; font-weight:600; margin-top:4px;">
+                Track progress & join the community
+              </div>
+              <div style="color:#9ca3af; font-size:13px; line-height:1.6; margin-top:4px;">
+                Monitor your fluency growth and connect with other learners.
+              </div>
+            </td>
+          </tr>
 
-    <div class="footer">
-      © 2026 Talktivity. All rights reserved.<br/>
-      Questions? Contact us at
-      <a href="mailto:support@talktivity.app">support@talktivity.app</a><br/>
-      This is an automated message. Please do not reply.
-    </div>
+     
 
-  </div>
+          <!-- Divider -->
+          <tr>
+            <td style="border-top:1px solid rgba(255,255,255,.08); padding-top:20px;">
+              <div style="font-size:12px; color:#9ca3af; line-height:1.6; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+                © 2026 Talktivity. All rights reserved.<br/>
+                Need help? 
+                <a href="mailto:support@talktivity.app" style="color:#ffffff; font-weight:600; text-decoration:none;">
+                  support@talktivity.app
+                </a><br/>
+                This is an automated message. Please do not reply.
+              </div>
+            </td>
+          </tr>
+
+        </table>
+        <!-- /Container -->
+
+      </td>
+    </tr>
+  </table>
 
 </body>
 </html>
