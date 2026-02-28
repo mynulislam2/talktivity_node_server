@@ -105,17 +105,19 @@ const authController = {
    */
   async verifyResetCode(req, res, next) {
     try {
-      const { email, password_reset_code } = req.body;
+      const { email, code, password_reset_code } = req.body;
+      // Support both 'code' (from frontend) and 'password_reset_code' (legacy)
+      const resetCode = code || password_reset_code;
 
       if (!email) {
         throw new ValidationError('Email required');
       }
 
-      if (!password_reset_code || !/^\d{6}$/.test(password_reset_code)) {
+      if (!resetCode || !/^\d{6}$/.test(String(resetCode).trim())) {
         throw new ValidationError('Invalid code format');
       }
 
-      const result = await authService.verifyResetCode(email, password_reset_code);
+      const result = await authService.verifyResetCode(email, String(resetCode).trim());
 
       if (!result.success) {
         return sendError(res, result.error, 400, 'VERIFICATION_FAILED');
@@ -133,13 +135,17 @@ const authController = {
    */
   async resetPassword(req, res, next) {
     try {
-      const { email, password_reset_code, new_password } = req.body;
+      const { email, code, password_reset_code, newPassword, new_password } = req.body;
+      // Support both 'code' (from frontend) and 'password_reset_code' (legacy)
+      const resetCode = code || password_reset_code;
+      // Support both 'newPassword' (from frontend) and 'new_password' (legacy)
+      const newPasswordValue = newPassword || new_password;
 
-      if (!email || !password_reset_code || !new_password) {
+      if (!email || !resetCode || !newPasswordValue) {
         throw new ValidationError('Email, code, and new password required');
       }
 
-      const result = await authService.resetPassword(email, password_reset_code, new_password);
+      const result = await authService.resetPassword(email, String(resetCode).trim(), newPasswordValue);
 
       if (!result.success) {
         return sendError(res, result.error, 400, 'PASSWORD_RESET_FAILED');
